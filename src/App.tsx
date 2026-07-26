@@ -307,13 +307,7 @@ export default function App() {
                 ) : null}
               </div>
 
-              <div className="w-full bg-white rounded-3xl p-5 shadow-[0_8px_30px_rgba(0,0,0,0.04)] mb-6">
-                <div className="flex flex-col items-center">
-                  <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">Live Power Usage</span>
-                  <MiniGraph power={bmsData.power} />
-                  <div className="mt-1.5 text-xs font-medium text-gray-600">{Math.abs(bmsData.power).toFixed(0)}W</div>
-                </div>
-              </div>
+
 
               <div className="w-full mt-auto">
                 <SwipeAction 
@@ -341,6 +335,14 @@ export default function App() {
                 </div>
                 <div className={`px-3 py-1 rounded-full text-xs font-bold ${bmsData.thermalState === 'Normal' ? 'bg-green-50 text-green-600' : 'bg-orange-50 text-orange-600'}`}>
                   {bmsData.thermalState}
+                </div>
+              </div>
+
+              <div className="w-full bg-white rounded-3xl p-5 shadow-[0_8px_30px_rgba(0,0,0,0.04)]">
+                <div className="flex flex-col items-center">
+                  <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">Live Power Usage</span>
+                  <MiniGraph power={bmsData.power} />
+                  <div className="mt-1.5 text-xs font-medium text-gray-600">{Math.abs(bmsData.power).toFixed(0)}W</div>
                 </div>
               </div>
 
