@@ -277,7 +277,7 @@ export function useBMS() {
           current: Number(actualCurrent.toFixed(1)),
           power: power,
           status: actualCurrent > 0 ? 'Charging' : (actualCurrent < 0 ? 'Discharging' : 'Normal'),
-          capacityPercent: Number(displaySoC.toFixed(1)),
+          capacityPercent: Number(displaySoC.toFixed(4)),
           remainingCapacityAH: newCapacityAH,
           cells,
           temperature: Number(newTemp.toFixed(1)),

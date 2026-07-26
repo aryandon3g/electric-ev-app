@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect } from 'react';
 import { Zap } from 'lucide-react';
-import { motion } from 'motion/react';
+import { motion, useSpring, useTransform } from 'motion/react';
 
 interface LiveProgressBarProps {
   percentage: number;
@@ -10,16 +10,18 @@ interface LiveProgressBarProps {
 }
 
 export function LiveProgressBar({ percentage, isCharging, voltage, estimatedRangeKM }: LiveProgressBarProps) {
-  const [displayPercent, setDisplayPercent] = useState(percentage);
-
-  // When smoothing is applied at the hook level, we don't need manual interpolation here.
+  // Smoothly animate the percentage value
+  const animatedPercent = useSpring(percentage, { bounce: 0, duration: 1500 });
+  const displayPercent = useTransform(animatedPercent, (v) => v.toFixed(3));
+  
   useEffect(() => {
-    setDisplayPercent(percentage);
-  }, [percentage]);
+    animatedPercent.set(percentage);
+  }, [percentage, animatedPercent]);
 
   const radius = 40;
   const circumference = 2 * Math.PI * radius;
-  const strokeDashoffset = circumference - (displayPercent / 100) * circumference;
+  // Animate the stroke using the same spring value for perfect sync
+  const strokeDashoffset = useTransform(animatedPercent, (v) => circumference - (v / 100) * circumference);
 
   return (
     <div className={`bg-white border ${isCharging ? 'border-green-200 shadow-[0_8px_30px_rgba(34,197,94,0.12)]' : 'border-gray-100 shadow-[0_8px_30px_rgba(0,0,0,0.06)]'} rounded-[2.5rem] p-8 w-full relative flex flex-col items-center justify-center transition-all duration-500`}>
@@ -43,12 +45,11 @@ export function LiveProgressBar({ percentage, isCharging, voltage, estimatedRang
             cy="50"
             r={radius}
             fill="transparent"
-            stroke={isCharging ? '#22C55E' : displayPercent > 20 ? '#3B82F6' : '#EF4444'}
+            stroke={isCharging ? '#22C55E' : percentage > 20 ? '#3B82F6' : '#EF4444'}
             strokeWidth="6"
             strokeLinecap="round"
             strokeDasharray={circumference}
-            animate={{ strokeDashoffset }}
-            transition={{ type: "spring", bounce: 0, duration: 1.5 }}
+            style={{ strokeDashoffset }}
           />
         </svg>
 
@@ -57,9 +58,10 @@ export function LiveProgressBar({ percentage, isCharging, voltage, estimatedRang
           <div className={`w-10 h-10 rounded-full flex items-center justify-center mb-3 ${isCharging ? 'bg-green-100 text-green-500 animate-pulse shadow-md' : 'bg-blue-50 text-blue-500 shadow-sm'}`}>
             <Zap size={20} className={isCharging ? 'fill-green-500' : 'fill-blue-500'} />
           </div>
-          <span className={`text-6xl sm:text-7xl font-black font-mono tracking-tighter ${isCharging ? 'text-green-500' : 'text-gray-900'}`}>
-            {displayPercent.toFixed(1)}<span className="text-3xl font-bold ml-1 text-gray-400">%</span>
-          </span>
+          <div className={`text-5xl sm:text-6xl font-black font-mono tracking-tighter flex items-baseline ${isCharging ? 'text-green-500' : 'text-gray-900'}`}>
+            <motion.span>{displayPercent}</motion.span>
+            <span className="text-3xl font-bold ml-1 text-gray-400">%</span>
+          </div>
         </div>
       </div>
       
