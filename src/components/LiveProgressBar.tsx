@@ -7,9 +7,10 @@ interface LiveProgressBarProps {
   isCharging: boolean;
   voltage: number;
   estimatedRangeKM: number;
+  isConnected: boolean;
 }
 
-export function LiveProgressBar({ percentage, isCharging, voltage, estimatedRangeKM }: LiveProgressBarProps) {
+export function LiveProgressBar({ percentage, isCharging, voltage, estimatedRangeKM, isConnected }: LiveProgressBarProps) {
   // Smoothly animate the percentage value
   const animatedPercent = useSpring(percentage, { bounce: 0, duration: 1500 });
   const displayPercentCharging = useTransform(animatedPercent, (v) => v.toFixed(3));
@@ -46,7 +47,7 @@ export function LiveProgressBar({ percentage, isCharging, voltage, estimatedRang
             cy="50"
             r={radius}
             fill="transparent"
-            stroke={isCharging ? '#22C55E' : percentage > 20 ? '#3B82F6' : '#EF4444'}
+            stroke={!isConnected ? '#9CA3AF' : isCharging ? '#22C55E' : percentage > 20 ? '#3B82F6' : '#EF4444'}
             strokeWidth="6"
             strokeLinecap="round"
             strokeDasharray={circumference}
@@ -56,16 +57,16 @@ export function LiveProgressBar({ percentage, isCharging, voltage, estimatedRang
 
         {/* Inner Content */}
         <div className="flex flex-col items-center justify-center relative z-10 text-center">
-          <div className={`w-10 h-10 rounded-full flex items-center justify-center mb-3 ${isCharging ? 'bg-green-100 text-green-500 animate-pulse shadow-md' : 'bg-blue-50 text-blue-500 shadow-sm'}`}>
-            <Zap size={20} className={isCharging ? 'fill-green-500' : 'fill-blue-500'} />
+          <div className={`w-10 h-10 rounded-full flex items-center justify-center mb-3 ${!isConnected ? 'bg-gray-100 text-gray-400' : isCharging ? 'bg-green-100 text-green-500 animate-pulse shadow-md' : 'bg-blue-50 text-blue-500 shadow-sm'}`}>
+            <Zap size={20} className={!isConnected ? 'fill-gray-400' : isCharging ? 'fill-green-500' : 'fill-blue-500'} />
           </div>
-          <div className={`text-5xl sm:text-6xl font-black font-mono tracking-tighter flex items-baseline ${isCharging ? 'text-green-500' : 'text-gray-900'}`}>
+          <div className={`text-5xl sm:text-6xl font-black font-mono tracking-tighter flex items-baseline ${!isConnected ? 'text-gray-400' : isCharging ? 'text-green-500' : 'text-gray-900'}`}>
             {isCharging ? (
               <motion.span>{displayPercentCharging}</motion.span>
             ) : (
               <motion.span>{displayPercentNormal}</motion.span>
             )}
-            <span className="text-3xl font-bold ml-1 text-gray-400">%</span>
+            <span className={`text-3xl font-bold ml-1 ${!isConnected ? 'text-gray-300' : 'text-gray-400'}`}>%</span>
           </div>
         </div>
       </div>
@@ -74,8 +75,8 @@ export function LiveProgressBar({ percentage, isCharging, voltage, estimatedRang
         <span className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-1.5 flex items-center gap-1.5">
           Estimated Range
         </span>
-        <div className="text-4xl sm:text-5xl font-black text-gray-900 tracking-tight">
-          {estimatedRangeKM.toFixed(0)} <span className="text-xl sm:text-2xl font-bold text-gray-400 ml-1">km</span>
+        <div className={`text-4xl sm:text-5xl font-black tracking-tight ${!isConnected ? 'text-gray-400' : 'text-gray-900'}`}>
+          {estimatedRangeKM.toFixed(0)} <span className={`text-xl sm:text-2xl font-bold ml-1 ${!isConnected ? 'text-gray-300' : 'text-gray-400'}`}>km</span>
         </div>
       </div>
     </div>

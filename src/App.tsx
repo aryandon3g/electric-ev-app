@@ -45,18 +45,18 @@ const SwipeAction = ({ label, icon: Icon, onAction, active }: { label: string, i
   )
 };
 
-const MiniGraph = ({ power }: { power: number }) => {
+const MiniGraph = ({ power, isConnected }: { power: number, isConnected: boolean }) => {
   const bars = Array.from({ length: 16 });
   return (
     <div className="flex items-end justify-center h-10 gap-1.5 opacity-80">
       {bars.map((_, i) => {
-        const height = Math.max(10, Math.min(100, Math.random() * 30 + (Math.abs(power) / 10)));
+        const height = isConnected ? Math.max(10, Math.min(100, Math.random() * 30 + (Math.abs(power) / 10))) : 10;
         return (
           <motion.div
             key={i}
             animate={{ height: `${height}%` }}
-            transition={{ duration: 0.3 + Math.random() * 0.5, repeat: Infinity, repeatType: 'mirror' }}
-            className="w-1.5 bg-blue-500 rounded-full"
+            transition={isConnected ? { duration: 0.3 + Math.random() * 0.5, repeat: Infinity, repeatType: 'mirror' } : undefined}
+            className={`w-1.5 rounded-full ${isConnected ? 'bg-blue-500' : 'bg-gray-200'}`}
           />
         );
       })}
@@ -64,39 +64,39 @@ const MiniGraph = ({ power }: { power: number }) => {
   )
 };
 
-const CellVoltageGraph = ({ cells }: { cells: CellData[] }) => {
+const CellVoltageGraph = ({ cells, isConnected }: { cells: CellData[], isConnected: boolean }) => {
   const [selectedCell, setSelectedCell] = useState<CellData | null>(null);
 
-  const maxV = Math.max(...cells.map(c => c.voltage));
-  const minV = Math.min(...cells.map(c => c.voltage));
+  const maxV = isConnected ? Math.max(...cells.map(c => c.voltage)) : 0;
+  const minV = isConnected ? Math.min(...cells.map(c => c.voltage)) : 0;
 
   return (
     <div className="flex flex-col gap-6 mt-2">
       <div className="flex items-end justify-between h-32 gap-1.5 px-1">
         {cells.map((cell) => {
-          const isMax = cell.voltage === maxV;
-          const isMin = cell.voltage === minV;
-          const isWarning = cell.healthStatus === 'Warning';
+          const isMax = isConnected && cell.voltage === maxV;
+          const isMin = isConnected && cell.voltage === minV;
+          const isWarning = isConnected && cell.healthStatus === 'Warning';
           
           let color = 'bg-gray-200';
           if (isWarning) color = 'bg-red-500';
           else if (isMax) color = 'bg-blue-500';
           else if (isMin) color = 'bg-orange-500';
 
-          const basePercent = Math.max(15, Math.min(100, ((cell.voltage - 3.0) / (4.2 - 3.0)) * 100));
+          const basePercent = isConnected ? Math.max(15, Math.min(100, ((cell.voltage - 3.0) / (4.2 - 3.0)) * 100)) : 10;
           
           return (
              <motion.div
                key={cell.id}
-               onClick={() => setSelectedCell(cell)}
-               animate={{ height: [`${Math.max(10, basePercent - 8)}%`, `${Math.min(100, basePercent + 8)}%`, `${Math.max(10, basePercent - 8)}%`] }}
+               onClick={() => isConnected && setSelectedCell(cell)}
+               animate={isConnected ? { height: [`${Math.max(10, basePercent - 8)}%`, `${Math.min(100, basePercent + 8)}%`, `${Math.max(10, basePercent - 8)}%`] } : { height: '10%' }}
                transition={{ duration: 1 + Math.random() * 1.5, repeat: Infinity, ease: 'easeInOut' }}
-               className={`w-full rounded-t-full cursor-pointer hover:opacity-80 transition-all ${color} relative ${selectedCell?.id === cell.id ? 'ring-2 ring-offset-2 ring-gray-400 shadow-md scale-110 z-10' : ''}`}
+               className={`w-full rounded-t-full ${isConnected ? 'cursor-pointer hover:opacity-80' : ''} transition-all ${color} relative ${selectedCell?.id === cell.id ? 'ring-2 ring-offset-2 ring-gray-400 shadow-md scale-110 z-10' : ''}`}
              >
-               {cell.isBalancing && (
+               {cell.isBalancing && isConnected && (
                  <div className="absolute -top-3 left-1/2 -translate-x-1/2 w-1.5 h-1.5 bg-yellow-400 rounded-full animate-pulse shadow-sm" />
                )}
-               {isWarning && (
+               {isWarning && isConnected && (
                  <div className="absolute -top-5 left-1/2 -translate-x-1/2 text-red-500">
                    <AlertCircle size={12} className="animate-pulse" />
                  </div>
@@ -107,7 +107,7 @@ const CellVoltageGraph = ({ cells }: { cells: CellData[] }) => {
       </div>
       
       <div className="h-24">
-        {selectedCell ? (
+        {selectedCell && isConnected ? (
           <motion.div initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} className="bg-gray-50 rounded-2xl p-4 border border-gray-100 flex items-center justify-between h-full shadow-sm">
             <div>
               <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1 flex items-center gap-1.5">
@@ -217,7 +217,6 @@ const Keypad = ({ onUnlock }: { onUnlock: () => void }) => {
 export default function App() {
   const { 
     bmsData, connectBluetooth, disconnect, isConnected, 
-    startDemo, isDemoMode, demoState, toggleDemoCharging, toggleDemoDischarging, 
     toggleAntiTheft, setChargeLimit, setReserveBuffer, setMaxRange, setMinVoltage, setMaxVoltage
   } = useBMS();
 
@@ -234,19 +233,11 @@ export default function App() {
         {/* Header */}
         <header className="px-6 pt-8 pb-2 flex items-center justify-end z-10">
           <div className="flex gap-2">
-            {!isConnected && !isDemoMode && (
-              <button 
-                onClick={startDemo}
-                className="px-3 py-2 bg-gray-100 text-gray-600 rounded-full text-[10px] font-bold uppercase tracking-wider hover:bg-gray-200 transition-colors"
-              >
-                Demo
-              </button>
-            )}
             <button 
-              onClick={isConnected || isDemoMode ? disconnect : connectBluetooth}
-              className={`w-10 h-10 rounded-full flex items-center justify-center shadow-sm transition-colors ${isConnected || isDemoMode ? 'bg-blue-50 text-blue-500' : 'bg-white text-gray-400 border border-gray-100'}`}
+              onClick={isConnected ? disconnect : connectBluetooth}
+              className={`w-10 h-10 rounded-full flex items-center justify-center shadow-sm transition-colors ${isConnected ? 'bg-blue-50 text-blue-500' : 'bg-white text-gray-400 border border-gray-100'}`}
             >
-              {isConnected || isDemoMode ? <Bluetooth size={18} /> : <BluetoothOff size={18} />}
+              {isConnected ? <Bluetooth size={18} /> : <BluetoothOff size={18} />}
             </button>
           </div>
         </header>
@@ -263,31 +254,9 @@ export default function App() {
                   isCharging={bmsData.status === 'Charging'} 
                   voltage={bmsData.voltage}
                   estimatedRangeKM={bmsData.estimatedRangeKM} 
+                  isConnected={isConnected}
                 />
               </div>
-
-              {isDemoMode && (
-                <div className="w-full bg-white rounded-3xl p-4 shadow-[0_8px_30px_rgba(0,0,0,0.04)] mb-4 flex flex-col gap-2.5">
-                   <div className="flex items-center justify-between">
-                     <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Demo Tools</span>
-                     <span className="text-[9px] font-bold text-gray-400 bg-gray-100 px-2 py-0.5 rounded-md uppercase">Simulation</span>
-                   </div>
-                   <div className="grid grid-cols-2 gap-2">
-                     <button 
-                       onClick={toggleDemoCharging}
-                       className={`flex items-center justify-center gap-1.5 py-2.5 rounded-2xl font-bold text-xs transition-colors ${demoState === 'charging' ? 'bg-green-500 text-white shadow-md' : 'bg-gray-100 text-gray-600'}`}
-                     >
-                       <Zap size={14} /> {demoState === 'charging' ? 'Charging...' : 'Start Charge'}
-                     </button>
-                     <button 
-                       onClick={toggleDemoDischarging}
-                       className={`flex items-center justify-center gap-1.5 py-2.5 rounded-2xl font-bold text-xs transition-colors ${demoState === 'discharging' ? 'bg-orange-500 text-white shadow-md' : 'bg-gray-100 text-gray-600'}`}
-                     >
-                       <FastForward size={14} /> {demoState === 'discharging' ? 'Driving...' : 'Start Drive'}
-                     </button>
-                   </div>
-                </div>
-              )}
 
               <div className="w-full mb-4">
                 {bmsData.status === 'Charging' && bmsData.timeToFullChargeMinutes !== null ? (
@@ -341,7 +310,7 @@ export default function App() {
               <div className="w-full bg-white rounded-3xl p-5 shadow-[0_8px_30px_rgba(0,0,0,0.04)]">
                 <div className="flex flex-col items-center">
                   <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">Live Power Usage</span>
-                  <MiniGraph power={bmsData.power} />
+                  <MiniGraph power={bmsData.power} isConnected={isConnected} />
                   <div className="mt-1.5 text-xs font-medium text-gray-600">{Math.abs(bmsData.power).toFixed(0)}W</div>
                 </div>
               </div>
@@ -397,13 +366,13 @@ export default function App() {
                   </div>
                 </div>
                 
-                <CellVoltageGraph cells={bmsData.cells} />
+                <CellVoltageGraph cells={bmsData.cells} isConnected={isConnected} />
               </div>
 
               <div className="bg-white rounded-3xl p-6 shadow-[0_8px_30px_rgba(0,0,0,0.04)] grid grid-cols-2 gap-4">
                 <div>
                   <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">State of Health</h3>
-                  <p className="text-2xl font-extrabold text-gray-900">98.5%</p>
+                  <p className="text-2xl font-extrabold text-gray-900">{isConnected ? '98.5%' : '0%'}</p>
                 </div>
                 <div>
                   <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Charge Cycles</h3>

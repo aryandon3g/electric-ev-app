@@ -1,26 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { BMSData, CellData } from '../types';
 
-// Default mock data for a 60V scooter battery (20S)
-const generateMockCells = (baseVoltage = 3.15, addWeakCell = false): CellData[] => {
-  return Array.from({ length: 20 }).map((_, i) => {
-    let variance = (Math.random() - 0.5) * 0.05;
-    let healthStatus: 'Good' | 'Warning' | 'Critical' = 'Good';
-    
-    // Simulate a weak cell on cell index 3 (Cell 4) for early warning feature
-    if (addWeakCell && i === 3) {
-       variance -= 0.3; // significantly lower voltage
-       healthStatus = 'Warning';
-    }
 
-    return {
-      id: i + 1,
-      voltage: Number((baseVoltage + variance).toFixed(3)),
-      isBalancing: Math.random() > 0.8,
-      healthStatus
-    };
-  });
-};
 
 // --- CORE ALGORITHMS ---
 
@@ -70,19 +51,30 @@ export class VoltageSmoother {
   }
 }
 
+const generateEmptyCells = (): CellData[] => {
+  return Array.from({ length: 20 }).map((_, i) => {
+    return {
+      id: i + 1,
+      voltage: 0,
+      isBalancing: false,
+      healthStatus: 'Good'
+    };
+  });
+};
+
 const INITIAL_DATA: BMSData = {
-  voltage: 61.2,
+  voltage: 0,
   current: 0.0,
-  capacityPercent: 85,
-  temperature: 28,
+  capacityPercent: 0,
+  temperature: 0,
   status: 'Normal',
   power: 0,
-  remainingCapacityAH: 25.5,
+  remainingCapacityAH: 0,
   nominalCapacityAH: 30.0,
-  cells: generateMockCells(3.82),
-  cycleCount: 42,
-  estimatedRangeKM: 65,
-  efficiencyWhPerKm: 25,
+  cells: generateEmptyCells(),
+  cycleCount: 0,
+  estimatedRangeKM: 0,
+  efficiencyWhPerKm: 0,
   thermalState: 'Normal',
   isLocked: false,
   alerts: [],
@@ -102,12 +94,122 @@ export function useBMS() {
   const [error, setError] = useState<string | null>(null);
   const [deviceName, setDeviceName] = useState<string | null>(null);
   const [bmsData, setBmsData] = useState<BMSData>(INITIAL_DATA);
-  const [isDemoMode, setIsDemoMode] = useState(false);
-  const [demoState, setDemoState] = useState<'charging' | 'discharging' | 'idle'>('idle');
   
-  const demoIntervalRef = useRef<number | null>(null);
   const deviceRef = useRef<BluetoothDevice | null>(null);
   const smootherRef = useRef(new VoltageSmoother(5));
+
+  // --- OPTIMIZED DATA PIPELINE ---
+  // This function takes raw telemetry from a real BMS or Demo and applies all the custom logic
+  const processBMSFrame = useCallback((
+    rawVoltage: number, 
+    rawCurrent: number, 
+    rawRemainingAH: number, 
+    rawCells: CellData[], 
+    rawTemp: number
+  ) => {
+    setBmsData(prev => {
+      let isLocked = prev.isLocked;
+      let actualCurrent = rawCurrent;
+
+      if (isLocked) {
+         actualCurrent = 0; // Anti-theft engaged, logically zero current output
+      }
+
+      // Thermal Management
+      let thermalState: 'Normal' | 'Throttled' | 'Critical' = 'Normal';
+      
+      if (rawTemp > 45) {
+         thermalState = 'Throttled';
+         // Throttle power by 50% for dynamic thermal management
+         if (actualCurrent < 0) actualCurrent = actualCurrent * 0.5;
+      }
+
+      // Smart Charge Limiter
+      let isChargingAllowed = true;
+      const projectedCapacityPercent = (rawRemainingAH / prev.nominalCapacityAH) * 100;
+      if (projectedCapacityPercent >= prev.chargeLimit) {
+          isChargingAllowed = false;
+      }
+
+      if (!isChargingAllowed && actualCurrent > 0) {
+          actualCurrent = 0; // Cut off charge logically
+      }
+
+      // Predictive Range Estimation
+      let efficiencyWhPerKm = prev.efficiencyWhPerKm;
+      if (actualCurrent < -10) {
+          efficiencyWhPerKm = 38; // Aggressive riding
+      } else if (actualCurrent < 0) {
+          efficiencyWhPerKm = 18; // Eco mode
+      } else if (actualCurrent === 0 && actualCurrent <= 0) {
+          efficiencyWhPerKm = 25; // idle baseline
+      }
+      
+      // Moving Average Filter (Anti-Voltage Sag)
+      const smoothedVoltage = Number(smootherRef.current.getSmoothedVoltage(rawVoltage).toFixed(2));
+
+      // True Zero Mapping (Reserve Buffer Logic)
+      let displaySoC = calculateTrueZeroSoC(smoothedVoltage, prev.reserveBuffer, prev.minVoltage, prev.maxVoltage);
+      
+      // Fallback
+      displaySoC = applyWeakCellFallback(rawCells, displaySoC);
+
+      const estimatedRangeKM = (displaySoC / 100) * prev.maxRangeKM;
+      const power = Number((smoothedVoltage * actualCurrent).toFixed(1));
+
+      // Trip Energy Analytics
+      let newTripEnergyWh = prev.tripEnergyWh;
+      if (actualCurrent < 0) {
+         // rough integration based on polling rate, assuming 2s interval for now, real app should use timestamps
+         newTripEnergyWh += Math.abs(power) * (2 / 3600); 
+      }
+
+      // Error Logs Simulation & Overload Warning
+      const newLogs = [...prev.errorLogs];
+      const alerts: string[] = [];
+      
+      if (actualCurrent < -25 && actualCurrent >= -30) {
+          alerts.push("⚠️ Overload Warning: High current draw detected. Reduce speed!");
+      }
+
+      if (actualCurrent < -30) {
+         newLogs.unshift({ timestamp: new Date().toLocaleTimeString(), code: 'ERR_OVERCURRENT', message: 'Over-Current Protection triggered.' });
+         actualCurrent = 0; // Cut-off
+         alerts.push("🛑 BMS CUT-OFF: Over-Current Protection.");
+      }
+
+      // Predictive Charge Time calculation
+      let timeToFullChargeMinutes: number | null = null;
+      if (actualCurrent > 0) {
+         const remainingAH = prev.nominalCapacityAH - rawRemainingAH;
+         timeToFullChargeMinutes = (remainingAH / actualCurrent) * 60;
+      }
+
+      if (rawTemp >= 45) alerts.push("🌡️ High Temp 45°C+: Power reduced by 50%");
+      if (rawCells.some(c => c.healthStatus === 'Warning')) alerts.push("⚠️ Cell Health Alert: Abnormal discharge detected.");
+      if (isLocked) alerts.push("🔒 Anti-Theft Active: Power output disabled.");
+      if (!isChargingAllowed && rawCurrent > 0) alerts.push(`⚡ Smart Charge Limit reached (${prev.chargeLimit}%). Charging paused.`);
+
+      return {
+        ...prev,
+        voltage: smoothedVoltage,
+        current: Number(actualCurrent.toFixed(1)),
+        power: power,
+        status: actualCurrent > 0 ? 'Charging' : (actualCurrent < 0 ? 'Discharging' : 'Normal'),
+        capacityPercent: Number(displaySoC.toFixed(4)),
+        remainingCapacityAH: rawRemainingAH,
+        cells: rawCells,
+        temperature: Number(rawTemp.toFixed(1)),
+        thermalState,
+        efficiencyWhPerKm,
+        estimatedRangeKM: Number(estimatedRangeKM.toFixed(1)),
+        timeToFullChargeMinutes,
+        alerts,
+        tripEnergyWh: newTripEnergyWh,
+        errorLogs: newLogs
+      };
+    });
+  }, []);
 
   const toggleAntiTheft = useCallback(() => {
     setBmsData(prev => ({ ...prev, isLocked: !prev.isLocked }));
@@ -133,183 +235,6 @@ export function useBMS() {
     setBmsData(prev => ({ ...prev, maxVoltage: voltage }));
   }, []);
 
-  const toggleDemoCharging = useCallback(() => {
-    setDemoState(prev => prev === 'charging' ? 'idle' : 'charging');
-  }, []);
-
-  const toggleDemoDischarging = useCallback(() => {
-    setDemoState(prev => prev === 'discharging' ? 'idle' : 'discharging');
-  }, []);
-
-  const startDemo = useCallback(() => {
-    setIsDemoMode(true);
-    setIsConnected(true);
-    setDeviceName('Demo Scooter BMS (60V)');
-    setDemoState('discharging');
-  }, []);
-
-  useEffect(() => {
-    if (!isDemoMode) {
-      if (demoIntervalRef.current) {
-        clearInterval(demoIntervalRef.current);
-        demoIntervalRef.current = null;
-      }
-      return;
-    }
-
-    demoIntervalRef.current = window.setInterval(() => {
-      setBmsData(prev => {
-        const isCharging = demoState === 'charging';
-        let newCurrent = prev.current;
-        let isLocked = prev.isLocked;
-
-        if (isLocked) {
-           newCurrent = 0; // Anti-theft engaged
-        } else if (isCharging) {
-          newCurrent = 5.0 + Math.random() * 5; 
-        } else if (demoState === 'discharging') {
-          // Dynamic riding: sometimes eco, sometimes aggressive
-          const isAggressive = Math.random() > 0.7;
-          newCurrent = isAggressive ? -(15 + Math.random() * 15) : -(2 + Math.random() * 8);
-        } else {
-          newCurrent = 0;
-        }
-
-        // Thermal Management
-        let newTemp = prev.temperature;
-        if (newCurrent < -15) newTemp += 0.8;
-        else if (newTemp > 28) newTemp -= 0.5;
-        
-        let thermalState: 'Normal' | 'Throttled' | 'Critical' = 'Normal';
-        let actualCurrent = newCurrent;
-        
-        if (newTemp > 45) {
-           thermalState = 'Throttled';
-           // Throttle power by 50% for dynamic thermal management
-           if (actualCurrent < 0) actualCurrent = actualCurrent * 0.5;
-        }
-
-        // Smart Charge Limiter
-        let isChargingAllowed = true;
-        const projectedCapacityPercent = (prev.remainingCapacityAH / prev.nominalCapacityAH) * 100;
-        if (projectedCapacityPercent >= prev.chargeLimit) {
-            isChargingAllowed = false;
-        }
-
-        if (!isChargingAllowed && actualCurrent > 0) {
-            actualCurrent = 0; // Cut off charge MOSFET
-        }
-
-        // Predictive Range Estimation
-        let efficiencyWhPerKm = prev.efficiencyWhPerKm;
-        if (actualCurrent < -10) {
-            efficiencyWhPerKm = 38; // Aggressive riding
-        } else if (actualCurrent < 0) {
-            efficiencyWhPerKm = 18; // Eco mode
-        } else if (actualCurrent === 0 && !isCharging) {
-            efficiencyWhPerKm = 25; // idle baseline
-        }
-        
-        const totalEnergyWh = prev.voltage * prev.remainingCapacityAH;
-        
-        // Cell Health Warning (Early warning simulation)
-        // Show the weak cell randomly more often if we are discharging heavily
-        const showWeakCell = Math.random() > (actualCurrent < -15 ? 0.2 : 0.8);
-        const cells = generateMockCells(3.82 + (actualCurrent > 0 ? 0.02 : -0.02), showWeakCell);
-        
-        // Update capacity based on current over time (simulated AH integration)
-        // 2000ms = 2 seconds = 2/3600 hours (multiplied by 50 for demo speed)
-        let newCapacityAH = prev.remainingCapacityAH + (actualCurrent * (100 / 3600));
-        newCapacityAH = Math.max(0, Math.min(prev.nominalCapacityAH, newCapacityAH));
-        const newCapacityPercent = Number(((newCapacityAH / prev.nominalCapacityAH) * 100).toFixed(4));
-
-        // The user wants range proportional to SOC based on configured Max Range
-        // 1. True Zero Mapping (Reserve Buffer Logic)
-        const baseVoltage = prev.minVoltage + ((newCapacityPercent / 100) * (prev.maxVoltage - prev.minVoltage));
-        const voltageSag = actualCurrent * 0.05; // 50mV per amp
-        const rawVoltage = Number((baseVoltage + voltageSag).toFixed(2));
-        
-        // 3. Moving Average Filter (Anti-Voltage Sag)
-        const smoothedVoltage = Number(smootherRef.current.getSmoothedVoltage(rawVoltage).toFixed(2));
-
-        let displaySoC = calculateTrueZeroSoC(smoothedVoltage, prev.reserveBuffer, prev.minVoltage, prev.maxVoltage);
-        displaySoC = applyWeakCellFallback(cells, displaySoC);
-
-        const estimatedRangeKM = (displaySoC / 100) * prev.maxRangeKM;
-
-        const power = Number((smoothedVoltage * actualCurrent).toFixed(1));
-
-        // Trip Energy Analytics
-        let newTripEnergyWh = prev.tripEnergyWh;
-        if (actualCurrent < 0) {
-           newTripEnergyWh += Math.abs(power) * (2 / 3600); // W * hours = Wh
-        }
-
-        // Error Logs Simulation & Overload Warning
-        const newLogs = [...prev.errorLogs];
-        const alerts: string[] = [];
-        
-        if (actualCurrent < -25 && actualCurrent >= -30) {
-            alerts.push("⚠️ Overload Warning: High current draw detected. Reduce speed to prevent power cut-off!");
-        }
-
-        if (actualCurrent < -30 && Math.random() > 0.8) {
-           newLogs.unshift({ timestamp: new Date().toLocaleTimeString(), code: 'ERR_OVERCURRENT', message: 'Over-Current Protection triggered due to excessive load.' });
-           actualCurrent = 0; // Cut-off
-           alerts.push("🛑 BMS CUT-OFF: Over-Current Protection.");
-        }
-
-        // Predictive Charge Time calculation
-        let timeToFullChargeMinutes: number | null = null;
-        if (actualCurrent > 0) {
-           const remainingAH = prev.nominalCapacityAH - newCapacityAH;
-           timeToFullChargeMinutes = (remainingAH / actualCurrent) * 60;
-        }
-
-        if (newTemp >= 45) alerts.push("🌡️ बैटरी गर्म हो रही है, कृपया स्कूटी छांव में रोकें। (High Temp 45°C+: Power reduced by 50%)");
-        if (cells.some(c => c.healthStatus === 'Warning')) alerts.push("⚠️ Cell Health Alert: Cell 4 discharging abnormally fast (High Delta). Service required soon.");
-        if (isLocked) alerts.push("🔒 Anti-Theft Active: Power output disabled. Unlock to start.");
-        if (!isChargingAllowed && isCharging) alerts.push(`⚡ Smart Charge Limit reached (${prev.chargeLimit}%). Charging paused.`);
-
-        return {
-          ...prev,
-          voltage: smoothedVoltage,
-          current: Number(actualCurrent.toFixed(1)),
-          power: power,
-          status: actualCurrent > 0 ? 'Charging' : (actualCurrent < 0 ? 'Discharging' : 'Normal'),
-          capacityPercent: Number(displaySoC.toFixed(4)),
-          remainingCapacityAH: newCapacityAH,
-          cells,
-          temperature: Number(newTemp.toFixed(1)),
-          thermalState,
-          efficiencyWhPerKm,
-          estimatedRangeKM: Number(estimatedRangeKM.toFixed(1)),
-          timeToFullChargeMinutes,
-          alerts,
-          tripEnergyWh: newTripEnergyWh,
-          errorLogs: newLogs
-        };
-      });
-    }, 2000);
-
-    return () => {
-      if (demoIntervalRef.current) {
-        clearInterval(demoIntervalRef.current);
-        demoIntervalRef.current = null;
-      }
-    };
-  }, [isDemoMode, demoState]);
-
-  const stopDemo = useCallback(() => {
-    if (demoIntervalRef.current) {
-      clearInterval(demoIntervalRef.current);
-    }
-    setIsDemoMode(false);
-    setIsConnected(false);
-    setDeviceName(null);
-    setBmsData(INITIAL_DATA);
-  }, []);
-
   const connectBluetooth = async () => {
     if (!navigator.bluetooth) {
       setError("Web Bluetooth API is not supported in this browser. Please use Chrome on Android or Desktop.");
@@ -320,32 +245,51 @@ export function useBMS() {
       setIsConnecting(true);
       setError(null);
       
+      // We request both the standard battery service and common BMS UART services (like JBD / Daly)
       const device = await navigator.bluetooth.requestDevice({
         acceptAllDevices: true,
-        optionalServices: ['battery_service']
+        optionalServices: [
+          'battery_service', 
+          '0000ffe0-0000-1000-8000-00805f9b34fb', // Common serial UUID (Daly)
+          '0000ff00-0000-1000-8000-00805f9b34fb'  // JBD UUID
+        ]
       });
 
       deviceRef.current = device;
-      setDeviceName(device.name || 'Unknown BMS Device');
+      setDeviceName(device.name || 'BMS Device');
       
       const server = await device.gatt?.connect();
       
       if (server) {
         setIsConnected(true);
         try {
+          // Attempt standard battery service first
           const batteryService = await server.getPrimaryService('battery_service');
           const levelCharacteristic = await batteryService.getCharacteristic('battery_level');
           const level = await levelCharacteristic.readValue();
+          
+          // Use basic level initially
           setBmsData(prev => ({ ...prev, capacityPercent: level.getUint8(0) }));
           
           await levelCharacteristic.startNotifications();
           levelCharacteristic.addEventListener('characteristicvaluechanged', (e: any) => {
-            const newLevel = e.target.value.getUint8(0);
-            setBmsData(prev => ({ ...prev, capacityPercent: newLevel }));
+             // In a real generic app, we would also parse UART bytes here if we connected to UART.
+             // But for standard battery service, we just have % level.
+             // We feed it to processBMSFrame using simulated other values, or if we had real UART, we'd extract them.
+             const newLevel = e.target.value.getUint8(0);
+             setBmsData(prev => {
+                const simulatedVoltage = prev.minVoltage + ((newLevel / 100) * (prev.maxVoltage - prev.minVoltage));
+                const capacityAH = (newLevel / 100) * prev.nominalCapacityAH;
+                
+                setTimeout(() => {
+                   processBMSFrame(simulatedVoltage, 0, capacityAH, prev.cells, prev.temperature);
+                }, 0);
+                
+                return prev;
+             });
           });
         } catch (e) {
-          console.warn("Standard battery service not found, falling back to simulated telemetry for UI demo", e);
-          startDemo();
+          console.warn("Standard battery service not found. If this is a real UART BMS, we would parse bytes here.", e);
         }
       }
 
@@ -370,15 +314,9 @@ export function useBMS() {
     if (deviceRef.current?.gatt?.connected) {
       deviceRef.current.gatt.disconnect();
     }
-    stopDemo();
     setIsConnected(false);
     setDeviceName(null);
-  }, [stopDemo]);
-
-  useEffect(() => {
-    return () => {
-      if (demoIntervalRef.current) clearInterval(demoIntervalRef.current);
-    };
+    setBmsData(INITIAL_DATA);
   }, []);
 
   return {
@@ -387,19 +325,13 @@ export function useBMS() {
     error,
     deviceName,
     bmsData,
-    isDemoMode,
-    demoState,
     connectBluetooth,
     disconnect,
-    startDemo,
-    stopDemo,
     toggleAntiTheft,
     setChargeLimit,
     setReserveBuffer,
     setMaxRange,
     setMinVoltage,
-    setMaxVoltage,
-    toggleDemoCharging,
-    toggleDemoDischarging
+    setMaxVoltage
   };
 }
