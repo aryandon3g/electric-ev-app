@@ -1,0 +1,6 @@
+{
+  "name": "EV BMS Monitor",
+  "description": "A Bluetooth-enabled Battery Management System (BMS) monitor for electric scooters. Tracks battery health, voltage, and individual cell status.",
+  "requestFramePermissions": ["bluetooth"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
