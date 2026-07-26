@@ -25,6 +25,8 @@ export interface BMSData {
   alerts: string[];
   timeToFullChargeMinutes: number | null;
   chargeLimit: number;
+  reserveBuffer: number;
   tripEnergyWh: number;
+  maxRangeKM: number;
   errorLogs: { timestamp: string; code: string; message: string }[];
 }

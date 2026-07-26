@@ -5,7 +5,7 @@ import { LiveProgressBar } from './components/LiveProgressBar';
 import { 
   Bluetooth, BluetoothOff, Lock, Unlock, 
   Activity, Settings, Thermometer, Battery, 
-  ShieldCheck, Zap, Moon, Clock, Navigation, Map, Power, FileWarning, AlertTriangle, AlertCircle, Play, Pause, FastForward
+  ShieldCheck, Zap, Moon, Clock, Navigation, Map, Power, FileWarning, AlertTriangle, AlertCircle, Play, Pause, FastForward, Delete
 } from 'lucide-react';
 import { CellData } from './types';
 
@@ -146,14 +146,83 @@ const CellVoltageGraph = ({ cells }: { cells: CellData[] }) => {
   );
 };
 
+const Keypad = ({ onUnlock }: { onUnlock: () => void }) => {
+  const [pin, setPin] = useState('');
+  const [error, setError] = useState(false);
+
+  const handlePress = (num: string) => {
+    if (pin.length < 4) {
+      const newPin = pin + num;
+      setPin(newPin);
+      if (newPin.length === 4) {
+        if (newPin === '8931') {
+          onUnlock();
+        } else {
+          setError(true);
+          setTimeout(() => {
+            setPin('');
+            setError(false);
+          }, 500);
+        }
+      }
+    }
+  };
+
+  const handleDelete = () => {
+    setPin(prev => prev.slice(0, -1));
+  };
+
+  return (
+    <div className="flex flex-col items-center justify-center h-full pt-8">
+      <div className="text-center mb-8">
+        <Lock className="w-10 h-10 text-gray-400 mx-auto mb-3" />
+        <h2 className="text-xl font-bold text-gray-900">Enter PIN</h2>
+        <p className="text-sm text-gray-400 mt-1">Controls are locked</p>
+      </div>
+
+      <div className="flex gap-4 mb-10">
+        {[0, 1, 2, 3].map(i => (
+          <div key={i} className={`w-3.5 h-3.5 rounded-full transition-colors ${pin.length > i ? 'bg-blue-500' : 'bg-gray-200'} ${error ? 'bg-red-500' : ''}`} />
+        ))}
+      </div>
+
+      <div className="grid grid-cols-3 gap-x-6 gap-y-4">
+        {[1, 2, 3, 4, 5, 6, 7, 8, 9].map(num => (
+          <button
+            key={num}
+            onClick={() => handlePress(num.toString())}
+            className="w-16 h-16 rounded-full bg-white shadow-sm border border-gray-100 text-2xl font-semibold text-gray-900 active:bg-gray-50 transition-colors flex items-center justify-center"
+          >
+            {num}
+          </button>
+        ))}
+        <div />
+        <button
+          onClick={() => handlePress('0')}
+          className="w-16 h-16 rounded-full bg-white shadow-sm border border-gray-100 text-2xl font-semibold text-gray-900 active:bg-gray-50 transition-colors flex items-center justify-center"
+        >
+          0
+        </button>
+        <button
+          onClick={handleDelete}
+          className="w-16 h-16 rounded-full flex items-center justify-center text-gray-400 active:text-gray-600 transition-colors bg-white shadow-sm border border-gray-100"
+        >
+          <Delete className="w-7 h-7" />
+        </button>
+      </div>
+    </div>
+  );
+};
+
 export default function App() {
   const { 
     bmsData, connectBluetooth, disconnect, isConnected, 
     startDemo, isDemoMode, demoState, toggleDemoCharging, toggleDemoDischarging, 
-    toggleAntiTheft, setChargeLimit 
+    toggleAntiTheft, setChargeLimit, setReserveBuffer, setMaxRange
   } = useBMS();
 
   const [activeTab, setActiveTab] = useState<'dashboard' | 'diagnostics' | 'controls'>('dashboard');
+  const [controlsUnlocked, setControlsUnlocked] = useState(false);
   const [kidMode, setKidMode] = useState(false);
   const [deepSleep, setDeepSleep] = useState(false);
 
@@ -163,119 +232,86 @@ export default function App() {
       <div className="w-full max-w-md bg-[#F8F9FA] min-h-screen relative shadow-2xl overflow-hidden flex flex-col">
         
         {/* Header */}
-        <header className="px-6 pt-12 pb-4 flex items-center justify-between z-10">
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight text-gray-900">EV Battery</h1>
-            <p className="text-sm font-medium text-gray-400 mt-0.5 flex items-center gap-1.5">
-              <span className={`w-2 h-2 rounded-full ${isConnected || isDemoMode ? 'bg-green-500 animate-pulse' : 'bg-gray-300'}`} />
-              {isConnected || isDemoMode ? (isDemoMode ? 'Demo Mode Active' : 'Connected • Ready') : 'Disconnected'}
-            </p>
-          </div>
+        <header className="px-6 pt-8 pb-2 flex items-center justify-end z-10">
           <div className="flex gap-2">
             {!isConnected && !isDemoMode && (
               <button 
                 onClick={startDemo}
-                className="px-3 py-2 bg-gray-100 text-gray-600 rounded-full text-xs font-bold uppercase tracking-wider hover:bg-gray-200 transition-colors"
+                className="px-3 py-2 bg-gray-100 text-gray-600 rounded-full text-[10px] font-bold uppercase tracking-wider hover:bg-gray-200 transition-colors"
               >
                 Demo
               </button>
             )}
             <button 
               onClick={isConnected || isDemoMode ? disconnect : connectBluetooth}
-              className={`w-12 h-12 rounded-full flex items-center justify-center shadow-sm transition-colors ${isConnected || isDemoMode ? 'bg-blue-50 text-blue-500' : 'bg-white text-gray-400 border border-gray-100'}`}
+              className={`w-10 h-10 rounded-full flex items-center justify-center shadow-sm transition-colors ${isConnected || isDemoMode ? 'bg-blue-50 text-blue-500' : 'bg-white text-gray-400 border border-gray-100'}`}
             >
-              {isConnected || isDemoMode ? <Bluetooth size={22} /> : <BluetoothOff size={22} />}
+              {isConnected || isDemoMode ? <Bluetooth size={18} /> : <BluetoothOff size={18} />}
             </button>
           </div>
         </header>
 
         {/* Scrollable Content Area */}
-        <main className="flex-1 overflow-y-auto px-6 pb-28 space-y-6 [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
+        <main className="flex-1 overflow-y-auto px-6 pb-24 space-y-4 [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
           
           {activeTab === 'dashboard' && (
             <motion.div initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} className="flex flex-col items-center h-full">
               
-              <div className="w-full mt-2 mb-6">
+              <div className="w-full mb-4">
                 <LiveProgressBar 
                   percentage={bmsData.capacityPercent} 
                   isCharging={bmsData.status === 'Charging'} 
-                  voltage={bmsData.voltage} 
+                  voltage={bmsData.voltage}
+                  estimatedRangeKM={bmsData.estimatedRangeKM} 
                 />
               </div>
 
               {isDemoMode && (
-                <div className="w-full bg-white rounded-3xl p-5 shadow-[0_8px_30px_rgba(0,0,0,0.04)] mb-6 flex flex-col gap-3">
+                <div className="w-full bg-white rounded-3xl p-4 shadow-[0_8px_30px_rgba(0,0,0,0.04)] mb-4 flex flex-col gap-2.5">
                    <div className="flex items-center justify-between">
-                     <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">Demo Tools</span>
-                     <span className="text-[10px] font-bold text-gray-400 bg-gray-100 px-2 py-0.5 rounded-md uppercase">Simulation</span>
+                     <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Demo Tools</span>
+                     <span className="text-[9px] font-bold text-gray-400 bg-gray-100 px-2 py-0.5 rounded-md uppercase">Simulation</span>
                    </div>
-                   <div className="grid grid-cols-2 gap-3">
+                   <div className="grid grid-cols-2 gap-2">
                      <button 
                        onClick={toggleDemoCharging}
-                       className={`flex items-center justify-center gap-2 py-3 rounded-2xl font-bold text-sm transition-colors ${demoState === 'charging' ? 'bg-green-500 text-white shadow-md' : 'bg-gray-100 text-gray-600'}`}
+                       className={`flex items-center justify-center gap-1.5 py-2.5 rounded-2xl font-bold text-xs transition-colors ${demoState === 'charging' ? 'bg-green-500 text-white shadow-md' : 'bg-gray-100 text-gray-600'}`}
                      >
-                       <Zap size={16} /> {demoState === 'charging' ? 'Charging...' : 'Start Charge'}
+                       <Zap size={14} /> {demoState === 'charging' ? 'Charging...' : 'Start Charge'}
                      </button>
                      <button 
                        onClick={toggleDemoDischarging}
-                       className={`flex items-center justify-center gap-2 py-3 rounded-2xl font-bold text-sm transition-colors ${demoState === 'discharging' ? 'bg-orange-500 text-white shadow-md' : 'bg-gray-100 text-gray-600'}`}
+                       className={`flex items-center justify-center gap-1.5 py-2.5 rounded-2xl font-bold text-xs transition-colors ${demoState === 'discharging' ? 'bg-orange-500 text-white shadow-md' : 'bg-gray-100 text-gray-600'}`}
                      >
-                       <FastForward size={16} /> {demoState === 'discharging' ? 'Driving...' : 'Start Drive'}
+                       <FastForward size={14} /> {demoState === 'discharging' ? 'Driving...' : 'Start Drive'}
                      </button>
                    </div>
                 </div>
               )}
 
-              <div className="grid grid-cols-2 gap-4 w-full mb-8">
+              <div className="w-full mb-4">
                 {bmsData.status === 'Charging' && bmsData.timeToFullChargeMinutes !== null ? (
-                  <div className="col-span-2 bg-blue-50 border border-blue-100 rounded-3xl p-5 shadow-sm flex items-center justify-between">
+                  <div className="col-span-2 bg-blue-50 border border-blue-100 rounded-3xl p-4 shadow-sm flex items-center justify-between">
                      <div className="flex items-center gap-3 text-blue-600">
-                       <Clock size={24} />
+                       <Clock size={20} />
                        <div>
-                         <div className="text-xs font-bold uppercase tracking-wider opacity-80">Time to Full Charge</div>
-                         <div className="text-xl font-black">
-                           {Math.floor(bmsData.timeToFullChargeMinutes / 60)}<span className="text-sm font-medium mx-1">h</span>
-                           {Math.floor(bmsData.timeToFullChargeMinutes % 60)}<span className="text-sm font-medium ml-1">m</span>
+                         <div className="text-[10px] font-bold uppercase tracking-wider opacity-80">Time to Full Charge</div>
+                         <div className="text-lg font-black">
+                           {Math.floor(bmsData.timeToFullChargeMinutes / 60)}<span className="text-xs font-medium mx-1">h</span>
+                           {Math.floor(bmsData.timeToFullChargeMinutes % 60)}<span className="text-xs font-medium ml-1">m</span>
                          </div>
                        </div>
                      </div>
-                     <span className="bg-blue-600 text-white text-[10px] uppercase tracking-wider font-bold px-2 py-1 rounded-full">Charging</span>
+                     <span className="bg-blue-600 text-white text-[9px] uppercase tracking-wider font-bold px-2 py-0.5 rounded-full">Charging</span>
                   </div>
                 ) : null}
-
-                <div className="col-span-2 bg-white rounded-3xl p-5 shadow-[0_8px_30px_rgba(0,0,0,0.04)] flex justify-between items-center">
-                   <div className="flex items-center gap-3">
-                     <div className="w-10 h-10 rounded-2xl bg-indigo-50 text-indigo-500 flex items-center justify-center">
-                       <Map size={20} />
-                     </div>
-                     <div>
-                       <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-0.5">Trip Energy</div>
-                       <div className="text-xl font-extrabold text-gray-900">
-                         {bmsData.tripEnergyWh.toFixed(0)}<span className="text-sm text-gray-400 ml-1">Wh</span>
-                       </div>
-                     </div>
-                   </div>
-                   <div className="text-right">
-                       <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-0.5">Efficiency</div>
-                       <div className="text-sm font-bold text-gray-700">
-                         {bmsData.efficiencyWhPerKm} <span className="text-xs text-gray-400">Wh/km</span>
-                       </div>
-                   </div>
-                </div>
               </div>
 
-              <div className="w-full bg-white rounded-3xl p-6 shadow-[0_8px_30px_rgba(0,0,0,0.04)] mb-8">
-                <div className="flex flex-col items-center justify-center text-center">
-                  <span className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-1">Est. Range</span>
-                  <div className="text-4xl font-extrabold text-gray-900">
-                    {bmsData.estimatedRangeKM.toFixed(0)} <span className="text-xl text-gray-400">km</span>
-                  </div>
-                </div>
-                
-                <div className="mt-8 border-t border-gray-50 pt-6 flex flex-col items-center">
-                  <span className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">Live Power Usage</span>
+              <div className="w-full bg-white rounded-3xl p-5 shadow-[0_8px_30px_rgba(0,0,0,0.04)] mb-6">
+                <div className="flex flex-col items-center">
+                  <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">Live Power Usage</span>
                   <MiniGraph power={bmsData.power} />
-                  <div className="mt-2 text-sm font-medium text-gray-600">{Math.abs(bmsData.power).toFixed(0)}W</div>
+                  <div className="mt-1.5 text-xs font-medium text-gray-600">{Math.abs(bmsData.power).toFixed(0)}W</div>
                 </div>
               </div>
 
@@ -309,6 +345,26 @@ export default function App() {
               </div>
 
               <div className="grid grid-cols-2 gap-4">
+                <div className="col-span-2 bg-white rounded-3xl p-5 shadow-[0_8px_30px_rgba(0,0,0,0.04)] flex justify-between items-center">
+                   <div className="flex items-center gap-3">
+                     <div className="w-10 h-10 rounded-2xl bg-indigo-50 text-indigo-500 flex items-center justify-center">
+                       <Map size={20} />
+                     </div>
+                     <div>
+                       <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-0.5">Trip Energy</div>
+                       <div className="text-xl font-extrabold text-gray-900">
+                         {bmsData.tripEnergyWh.toFixed(0)}<span className="text-sm text-gray-400 ml-1">Wh</span>
+                       </div>
+                     </div>
+                   </div>
+                   <div className="text-right">
+                       <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-0.5">Efficiency</div>
+                       <div className="text-sm font-bold text-gray-700">
+                         {bmsData.efficiencyWhPerKm} <span className="text-xs text-gray-400">Wh/km</span>
+                       </div>
+                   </div>
+                </div>
+
                 <div className="bg-white rounded-3xl p-5 shadow-[0_8px_30px_rgba(0,0,0,0.04)]">
                    <div className="flex items-center gap-2 text-gray-400 mb-2">
                      <Zap size={18} className="text-yellow-500" />
@@ -381,73 +437,132 @@ export default function App() {
           {activeTab === 'controls' && (
             <motion.div initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} className="space-y-4">
               
-              <div className="bg-white rounded-3xl p-6 shadow-[0_8px_30px_rgba(0,0,0,0.04)]">
-                <div className="flex items-center justify-between mb-8">
-                  <div className="flex items-center gap-4">
-                    <div className="w-12 h-12 rounded-2xl bg-orange-50 text-orange-500 flex items-center justify-center">
-                      <ShieldCheck size={24} />
+              {!controlsUnlocked ? (
+                <Keypad onUnlock={() => setControlsUnlocked(true)} />
+              ) : (
+                <>
+                  <div className="bg-white rounded-3xl p-6 shadow-[0_8px_30px_rgba(0,0,0,0.04)]">
+                    <div className="flex items-center justify-between mb-8">
+                      <div className="flex items-center gap-4">
+                        <div className="w-12 h-12 rounded-2xl bg-orange-50 text-orange-500 flex items-center justify-center">
+                          <ShieldCheck size={24} />
+                        </div>
+                        <div>
+                          <h3 className="text-base font-bold text-gray-900">Kid Mode</h3>
+                          <p className="text-xs font-medium text-gray-400">Limit output to 15A</p>
+                        </div>
+                      </div>
+                      <button 
+                        onClick={() => setKidMode(!kidMode)}
+                        className={`relative inline-flex h-8 w-14 items-center rounded-full transition-colors duration-300 ${kidMode ? 'bg-orange-500' : 'bg-gray-200'}`}
+                      >
+                        <span className={`inline-block h-6 w-6 transform rounded-full bg-white transition-transform duration-300 ${kidMode ? 'translate-x-7' : 'translate-x-1 shadow-sm'}`} />
+                      </button>
                     </div>
-                    <div>
-                      <h3 className="text-base font-bold text-gray-900">Kid Mode</h3>
-                      <p className="text-xs font-medium text-gray-400">Limit output to 15A</p>
-                    </div>
-                  </div>
-                  <button 
-                    onClick={() => setKidMode(!kidMode)}
-                    className={`relative inline-flex h-8 w-14 items-center rounded-full transition-colors duration-300 ${kidMode ? 'bg-orange-500' : 'bg-gray-200'}`}
-                  >
-                    <span className={`inline-block h-6 w-6 transform rounded-full bg-white transition-transform duration-300 ${kidMode ? 'translate-x-7' : 'translate-x-1 shadow-sm'}`} />
-                  </button>
-                </div>
 
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-4">
-                    <div className="w-12 h-12 rounded-2xl bg-indigo-50 text-indigo-500 flex items-center justify-center">
-                      <Moon size={24} />
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-4">
+                        <div className="w-12 h-12 rounded-2xl bg-indigo-50 text-indigo-500 flex items-center justify-center">
+                          <Moon size={24} />
+                        </div>
+                        <div>
+                          <h3 className="text-base font-bold text-gray-900">Deep Sleep</h3>
+                          <p className="text-xs font-medium text-gray-400">Minimal battery drain</p>
+                        </div>
+                      </div>
+                      <button 
+                        onClick={() => setDeepSleep(!deepSleep)}
+                        className={`relative inline-flex h-8 w-14 items-center rounded-full transition-colors duration-300 ${deepSleep ? 'bg-indigo-500' : 'bg-gray-200'}`}
+                      >
+                        <span className={`inline-block h-6 w-6 transform rounded-full bg-white transition-transform duration-300 ${deepSleep ? 'translate-x-7' : 'translate-x-1 shadow-sm'}`} />
+                      </button>
                     </div>
-                    <div>
-                      <h3 className="text-base font-bold text-gray-900">Deep Sleep</h3>
-                      <p className="text-xs font-medium text-gray-400">Minimal battery drain</p>
+                  </div>
+
+                  <div className="bg-white rounded-3xl p-6 shadow-[0_8px_30px_rgba(0,0,0,0.04)]">
+                    <div className="flex items-center gap-4 mb-6">
+                      <div className="w-12 h-12 rounded-2xl bg-green-50 text-green-500 flex items-center justify-center">
+                        <Zap size={24} />
+                      </div>
+                      <div>
+                        <h3 className="text-base font-bold text-gray-900">Smart Charge Limit</h3>
+                        <p className="text-xs font-medium text-gray-400">Preserve battery lifespan</p>
+                      </div>
+                    </div>
+
+                    <div className="px-2 pt-2">
+                      <div className="flex items-center justify-between">
+                        <label className="text-sm font-bold text-gray-900">
+                          Target (%)
+                        </label>
+                        <input 
+                          type="number" 
+                          min="0" 
+                          max="100" 
+                          value={bmsData.chargeLimit}
+                          onChange={(e) => setChargeLimit(Number(e.target.value))}
+                          className="w-24 px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 font-bold focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent text-right"
+                        />
+                      </div>
                     </div>
                   </div>
-                  <button 
-                    onClick={() => setDeepSleep(!deepSleep)}
-                    className={`relative inline-flex h-8 w-14 items-center rounded-full transition-colors duration-300 ${deepSleep ? 'bg-indigo-500' : 'bg-gray-200'}`}
-                  >
-                    <span className={`inline-block h-6 w-6 transform rounded-full bg-white transition-transform duration-300 ${deepSleep ? 'translate-x-7' : 'translate-x-1 shadow-sm'}`} />
-                  </button>
-                </div>
-              </div>
 
-              <div className="bg-white rounded-3xl p-6 shadow-[0_8px_30px_rgba(0,0,0,0.04)]">
-                <div className="flex items-center gap-4 mb-6">
-                  <div className="w-12 h-12 rounded-2xl bg-green-50 text-green-500 flex items-center justify-center">
-                    <Zap size={24} />
-                  </div>
-                  <div>
-                    <h3 className="text-base font-bold text-gray-900">Smart Charge Limit</h3>
-                    <p className="text-xs font-medium text-gray-400">Preserve battery lifespan</p>
-                  </div>
-                </div>
+                  <div className="bg-white rounded-3xl p-6 shadow-[0_8px_30px_rgba(0,0,0,0.04)]">
+                    <div className="flex items-center gap-4 mb-6">
+                      <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-500 flex items-center justify-center">
+                        <Battery size={24} />
+                      </div>
+                      <div>
+                        <h3 className="text-base font-bold text-gray-900">Reserve Buffer Logic</h3>
+                        <p className="text-xs font-medium text-gray-400">Set hidden capacity</p>
+                      </div>
+                    </div>
 
-                <div className="px-2 pt-2">
-                  <div className="flex justify-between text-sm font-bold text-gray-900 mb-4">
-                    <span>Target: {bmsData.chargeLimit}%</span>
+                    <div className="px-2 pt-2">
+                      <div className="flex items-center justify-between">
+                        <label className="text-sm font-bold text-gray-900">
+                          Buffer (%)
+                        </label>
+                        <input 
+                          type="number" 
+                          min="0" 
+                          max="100" 
+                          value={bmsData.reserveBuffer}
+                          onChange={(e) => setReserveBuffer(Number(e.target.value))}
+                          className="w-24 px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 font-bold focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-right"
+                        />
+                      </div>
+                    </div>
                   </div>
-                  <input 
-                    type="range" 
-                    min="80" 
-                    max="100" 
-                    value={bmsData.chargeLimit}
-                    onChange={(e) => setChargeLimit(Number(e.target.value))}
-                    className="w-full h-2.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-green-500"
-                  />
-                  <div className="flex justify-between text-xs font-medium text-gray-400 mt-3">
-                    <span>80%</span>
-                    <span>100%</span>
+
+                  <div className="bg-white rounded-3xl p-6 shadow-[0_8px_30px_rgba(0,0,0,0.04)]">
+                    <div className="flex items-center gap-4 mb-6">
+                      <div className="w-12 h-12 rounded-2xl bg-purple-50 text-purple-500 flex items-center justify-center">
+                        <Navigation size={24} />
+                      </div>
+                      <div>
+                        <h3 className="text-base font-bold text-gray-900">EV Model Max Range</h3>
+                        <p className="text-xs font-medium text-gray-400">Set 100% SoC range estimate</p>
+                      </div>
+                    </div>
+
+                    <div className="px-2 pt-2">
+                      <div className="flex items-center justify-between">
+                        <label className="text-sm font-bold text-gray-900">
+                          Max Range (km)
+                        </label>
+                        <input 
+                          type="number" 
+                          min="1" 
+                          value={bmsData.maxRangeKM}
+                          onChange={(e) => setMaxRange(Number(e.target.value))}
+                          className="w-28 px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 font-bold focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent text-right"
+                        />
+                      </div>
+                    </div>
                   </div>
-                </div>
-              </div>
+                </>
+              )}
 
             </motion.div>
           )}
@@ -455,7 +570,7 @@ export default function App() {
         </main>
 
         {/* Bottom Navigation */}
-        <nav className="absolute bottom-0 left-0 right-0 h-24 bg-white shadow-[0_-10px_40px_rgba(0,0,0,0.06)] rounded-t-[2.5rem] flex justify-around items-center px-6 z-50 pb-4">
+        <nav className="absolute bottom-0 left-0 right-0 h-20 bg-white shadow-[0_-10px_40px_rgba(0,0,0,0.06)] rounded-t-[2.5rem] flex justify-around items-center px-6 z-50 pb-2">
           <NavItem 
             icon={Battery} 
             label="Dashboard" 
@@ -484,12 +599,12 @@ const NavItem = ({ icon: Icon, label, active, onClick }: { icon: any, label: str
   return (
     <button 
       onClick={onClick}
-      className="flex flex-col items-center justify-center w-20 h-16 gap-1.5"
+      className="flex flex-col items-center justify-center w-16 h-12 gap-1"
     >
-      <div className={`flex items-center justify-center w-12 h-10 rounded-2xl transition-all duration-300 ${active ? 'bg-blue-50 text-blue-600' : 'text-gray-400'}`}>
-        <Icon size={24} strokeWidth={active ? 2.5 : 2} />
+      <div className={`flex items-center justify-center w-8 h-8 rounded-xl transition-all duration-300 ${active ? 'bg-blue-50 text-blue-600' : 'text-gray-400'}`}>
+        <Icon size={18} strokeWidth={active ? 2.5 : 2} />
       </div>
-      <span className={`text-[10px] font-bold tracking-wide transition-colors ${active ? 'text-blue-600' : 'text-gray-400'}`}>
+      <span className={`text-[9px] font-bold tracking-wide transition-colors ${active ? 'text-blue-600' : 'text-gray-400'}`}>
         {label}
       </span>
     </button>

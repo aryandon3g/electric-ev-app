@@ -1,15 +1,15 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { BMSData, CellData } from '../types';
 
-// Default mock data for a 60V scooter battery (16S lithium-ion)
-const generateMockCells = (baseVoltage = 3.8, addWeakCell = false): CellData[] => {
-  return Array.from({ length: 16 }).map((_, i) => {
+// Default mock data for a 60V scooter battery (20S)
+const generateMockCells = (baseVoltage = 3.15, addWeakCell = false): CellData[] => {
+  return Array.from({ length: 20 }).map((_, i) => {
     let variance = (Math.random() - 0.5) * 0.05;
     let healthStatus: 'Good' | 'Warning' | 'Critical' = 'Good';
     
     // Simulate a weak cell on cell index 3 (Cell 4) for early warning feature
     if (addWeakCell && i === 3) {
-       variance -= 0.15; // significantly lower voltage
+       variance -= 0.3; // significantly lower voltage
        healthStatus = 'Warning';
     }
 
@@ -21,6 +21,57 @@ const generateMockCells = (baseVoltage = 3.8, addWeakCell = false): CellData[] =
     };
   });
 };
+
+// --- CORE ALGORITHMS ---
+
+// 1. True Zero Mapping (Reserve Buffer Logic)
+export const calculateTrueZeroSoC = (voltage: number, reserveBuffer: number = 0): number => {
+  const MIN_V = 55.0;
+  const MAX_V = 64.0;
+  
+  if (voltage <= MIN_V) return 0;
+  if (voltage >= MAX_V) return 100;
+  
+  const rawSoC = ((voltage - MIN_V) / (MAX_V - MIN_V)) * 100;
+  
+  if (rawSoC <= reserveBuffer) {
+    return 0;
+  }
+  
+  return ((rawSoC - reserveBuffer) / (100 - reserveBuffer)) * 100;
+};
+
+// 2. The "Weakest Cell" Fallback Logic
+export const applyWeakCellFallback = (cells: CellData[], currentSoC: number): number => {
+  if (!cells || cells.length === 0) return currentSoC;
+  const lowestCellVoltage = Math.min(...cells.map(c => c.voltage));
+  
+  if (lowestCellVoltage < 2.9) {
+    return Math.min(currentSoC, 5); // Drop to 5% to warn user of impending cut-off
+  }
+  return currentSoC;
+};
+
+// 3. Moving Average Filter (Anti-Voltage Sag)
+export class VoltageSmoother {
+  private history: { value: number; timestamp: number }[] = [];
+  private windowMs: number;
+
+  constructor(windowSeconds = 5) {
+    this.windowMs = windowSeconds * 1000;
+  }
+
+  getSmoothedVoltage(newVoltage: number): number {
+    const now = Date.now();
+    this.history.push({ value: newVoltage, timestamp: now });
+    
+    // Remove values older than windowMs
+    this.history = this.history.filter(item => now - item.timestamp <= this.windowMs);
+    
+    const sum = this.history.reduce((acc, item) => acc + item.value, 0);
+    return sum / this.history.length;
+  }
+}
 
 const INITIAL_DATA: BMSData = {
   voltage: 61.2,
@@ -40,7 +91,9 @@ const INITIAL_DATA: BMSData = {
   alerts: [],
   timeToFullChargeMinutes: null,
   chargeLimit: 100,
+  reserveBuffer: 5,
   tripEnergyWh: 0,
+  maxRangeKM: 70,
   errorLogs: []
 };
 
@@ -55,6 +108,7 @@ export function useBMS() {
   
   const demoIntervalRef = useRef<number | null>(null);
   const deviceRef = useRef<BluetoothDevice | null>(null);
+  const smootherRef = useRef(new VoltageSmoother(5));
 
   const toggleAntiTheft = useCallback(() => {
     setBmsData(prev => ({ ...prev, isLocked: !prev.isLocked }));
@@ -62,6 +116,14 @@ export function useBMS() {
 
   const setChargeLimit = useCallback((limit: number) => {
     setBmsData(prev => ({ ...prev, chargeLimit: limit }));
+  }, []);
+
+  const setReserveBuffer = useCallback((buffer: number) => {
+    setBmsData(prev => ({ ...prev, reserveBuffer: buffer }));
+  }, []);
+
+  const setMaxRange = useCallback((range: number) => {
+    setBmsData(prev => ({ ...prev, maxRangeKM: range }));
   }, []);
 
   const toggleDemoCharging = useCallback(() => {
@@ -142,8 +204,7 @@ export function useBMS() {
         }
         
         const totalEnergyWh = prev.voltage * prev.remainingCapacityAH;
-        const estimatedRangeKM = totalEnergyWh / efficiencyWhPerKm;
-
+        
         // Cell Health Warning (Early warning simulation)
         // Show the weak cell randomly more often if we are discharging heavily
         const showWeakCell = Math.random() > (actualCurrent < -15 ? 0.2 : 0.8);
@@ -155,13 +216,21 @@ export function useBMS() {
         newCapacityAH = Math.max(0, Math.min(prev.nominalCapacityAH, newCapacityAH));
         const newCapacityPercent = Number(((newCapacityAH / prev.nominalCapacityAH) * 100).toFixed(4));
 
-        // Smooth voltage simulation based on capacity (48V to 67.2V for 16S)
-        // Add a slight voltage sag/rise based on current for realism
-        const baseVoltage = 48 + ((newCapacityPercent / 100) * (67.2 - 48));
+        // The user wants range proportional to SOC based on configured Max Range
+        // 1. True Zero Mapping (Reserve Buffer Logic)
+        const baseVoltage = 55 + ((newCapacityPercent / 100) * (64 - 55));
         const voltageSag = actualCurrent * 0.05; // 50mV per amp
-        const newVoltage = Number((baseVoltage + voltageSag).toFixed(2));
+        const rawVoltage = Number((baseVoltage + voltageSag).toFixed(2));
+        
+        // 3. Moving Average Filter (Anti-Voltage Sag)
+        const smoothedVoltage = Number(smootherRef.current.getSmoothedVoltage(rawVoltage).toFixed(2));
 
-        const power = Number((newVoltage * actualCurrent).toFixed(1));
+        let displaySoC = calculateTrueZeroSoC(smoothedVoltage, prev.reserveBuffer);
+        displaySoC = applyWeakCellFallback(cells, displaySoC);
+
+        const estimatedRangeKM = (displaySoC / 100) * prev.maxRangeKM;
+
+        const power = Number((smoothedVoltage * actualCurrent).toFixed(1));
 
         // Trip Energy Analytics
         let newTripEnergyWh = prev.tripEnergyWh;
@@ -197,11 +266,11 @@ export function useBMS() {
 
         return {
           ...prev,
-          voltage: newVoltage,
+          voltage: smoothedVoltage,
           current: Number(actualCurrent.toFixed(1)),
           power: power,
           status: actualCurrent > 0 ? 'Charging' : (actualCurrent < 0 ? 'Discharging' : 'Normal'),
-          capacityPercent: newCapacityPercent,
+          capacityPercent: Number(displaySoC.toFixed(1)),
           remainingCapacityAH: newCapacityAH,
           cells,
           temperature: Number(newTemp.toFixed(1)),
@@ -319,6 +388,8 @@ export function useBMS() {
     stopDemo,
     toggleAntiTheft,
     setChargeLimit,
+    setReserveBuffer,
+    setMaxRange,
     toggleDemoCharging,
     toggleDemoDischarging
   };
