@@ -25,14 +25,11 @@ const generateMockCells = (baseVoltage = 3.15, addWeakCell = false): CellData[] 
 // --- CORE ALGORITHMS ---
 
 // 1. True Zero Mapping (Reserve Buffer Logic)
-export const calculateTrueZeroSoC = (voltage: number, reserveBuffer: number = 0): number => {
-  const MIN_V = 55.0;
-  const MAX_V = 64.0;
+export const calculateTrueZeroSoC = (voltage: number, reserveBuffer: number = 0, minV: number = 55.0, maxV: number = 64.0): number => {
+  if (voltage <= minV) return 0;
+  if (voltage >= maxV) return 100;
   
-  if (voltage <= MIN_V) return 0;
-  if (voltage >= MAX_V) return 100;
-  
-  const rawSoC = ((voltage - MIN_V) / (MAX_V - MIN_V)) * 100;
+  const rawSoC = ((voltage - minV) / (maxV - minV)) * 100;
   
   if (rawSoC <= reserveBuffer) {
     return 0;
@@ -94,6 +91,8 @@ const INITIAL_DATA: BMSData = {
   reserveBuffer: 5,
   tripEnergyWh: 0,
   maxRangeKM: 70,
+  minVoltage: 55,
+  maxVoltage: 64,
   errorLogs: []
 };
 
@@ -124,6 +123,14 @@ export function useBMS() {
 
   const setMaxRange = useCallback((range: number) => {
     setBmsData(prev => ({ ...prev, maxRangeKM: range }));
+  }, []);
+
+  const setMinVoltage = useCallback((voltage: number) => {
+    setBmsData(prev => ({ ...prev, minVoltage: voltage }));
+  }, []);
+
+  const setMaxVoltage = useCallback((voltage: number) => {
+    setBmsData(prev => ({ ...prev, maxVoltage: voltage }));
   }, []);
 
   const toggleDemoCharging = useCallback(() => {
@@ -218,14 +225,14 @@ export function useBMS() {
 
         // The user wants range proportional to SOC based on configured Max Range
         // 1. True Zero Mapping (Reserve Buffer Logic)
-        const baseVoltage = 55 + ((newCapacityPercent / 100) * (64 - 55));
+        const baseVoltage = prev.minVoltage + ((newCapacityPercent / 100) * (prev.maxVoltage - prev.minVoltage));
         const voltageSag = actualCurrent * 0.05; // 50mV per amp
         const rawVoltage = Number((baseVoltage + voltageSag).toFixed(2));
         
         // 3. Moving Average Filter (Anti-Voltage Sag)
         const smoothedVoltage = Number(smootherRef.current.getSmoothedVoltage(rawVoltage).toFixed(2));
 
-        let displaySoC = calculateTrueZeroSoC(smoothedVoltage, prev.reserveBuffer);
+        let displaySoC = calculateTrueZeroSoC(smoothedVoltage, prev.reserveBuffer, prev.minVoltage, prev.maxVoltage);
         displaySoC = applyWeakCellFallback(cells, displaySoC);
 
         const estimatedRangeKM = (displaySoC / 100) * prev.maxRangeKM;
@@ -390,6 +397,8 @@ export function useBMS() {
     setChargeLimit,
     setReserveBuffer,
     setMaxRange,
+    setMinVoltage,
+    setMaxVoltage,
     toggleDemoCharging,
     toggleDemoDischarging
   };

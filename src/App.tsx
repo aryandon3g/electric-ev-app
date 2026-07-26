@@ -218,7 +218,7 @@ export default function App() {
   const { 
     bmsData, connectBluetooth, disconnect, isConnected, 
     startDemo, isDemoMode, demoState, toggleDemoCharging, toggleDemoDischarging, 
-    toggleAntiTheft, setChargeLimit, setReserveBuffer, setMaxRange
+    toggleAntiTheft, setChargeLimit, setReserveBuffer, setMaxRange, setMinVoltage, setMaxVoltage
   } = useBMS();
 
   const [activeTab, setActiveTab] = useState<'dashboard' | 'diagnostics' | 'controls'>('dashboard');
@@ -557,6 +557,46 @@ export default function App() {
                           value={bmsData.maxRangeKM}
                           onChange={(e) => setMaxRange(Number(e.target.value))}
                           className="w-28 px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 font-bold focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent text-right"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="bg-white rounded-3xl p-6 shadow-[0_8px_30px_rgba(0,0,0,0.04)]">
+                    <div className="flex items-center gap-4 mb-6">
+                      <div className="w-12 h-12 rounded-2xl bg-teal-50 text-teal-500 flex items-center justify-center">
+                        <Zap size={24} />
+                      </div>
+                      <div>
+                        <h3 className="text-base font-bold text-gray-900">Voltage Calibration</h3>
+                        <p className="text-xs font-medium text-gray-400">Map 0-100% to actual volts</p>
+                      </div>
+                    </div>
+
+                    <div className="px-2 pt-2 space-y-4">
+                      <div className="flex items-center justify-between">
+                        <label className="text-sm font-bold text-gray-900">
+                          Min Voltage (0%)
+                        </label>
+                        <input 
+                          type="number" 
+                          step="0.1"
+                          value={bmsData.minVoltage}
+                          onChange={(e) => setMinVoltage(Number(e.target.value))}
+                          className="w-28 px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 font-bold focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent text-right"
+                        />
+                      </div>
+                      
+                      <div className="flex items-center justify-between">
+                        <label className="text-sm font-bold text-gray-900">
+                          Max Voltage (100%)
+                        </label>
+                        <input 
+                          type="number" 
+                          step="0.1"
+                          value={bmsData.maxVoltage}
+                          onChange={(e) => setMaxVoltage(Number(e.target.value))}
+                          className="w-28 px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 font-bold focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent text-right"
                         />
                       </div>
                     </div>

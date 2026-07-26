@@ -28,5 +28,7 @@ export interface BMSData {
   reserveBuffer: number;
   tripEnergyWh: number;
   maxRangeKM: number;
+  minVoltage: number;
+  maxVoltage: number;
   errorLogs: { timestamp: string; code: string; message: string }[];
 }
