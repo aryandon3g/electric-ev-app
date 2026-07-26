@@ -12,7 +12,8 @@ interface LiveProgressBarProps {
 export function LiveProgressBar({ percentage, isCharging, voltage, estimatedRangeKM }: LiveProgressBarProps) {
   // Smoothly animate the percentage value
   const animatedPercent = useSpring(percentage, { bounce: 0, duration: 1500 });
-  const displayPercent = useTransform(animatedPercent, (v) => v.toFixed(3));
+  const displayPercentCharging = useTransform(animatedPercent, (v) => v.toFixed(3));
+  const displayPercentNormal = useTransform(animatedPercent, (v) => Math.round(v).toString());
   
   useEffect(() => {
     animatedPercent.set(percentage);
@@ -59,7 +60,11 @@ export function LiveProgressBar({ percentage, isCharging, voltage, estimatedRang
             <Zap size={20} className={isCharging ? 'fill-green-500' : 'fill-blue-500'} />
           </div>
           <div className={`text-5xl sm:text-6xl font-black font-mono tracking-tighter flex items-baseline ${isCharging ? 'text-green-500' : 'text-gray-900'}`}>
-            <motion.span>{displayPercent}</motion.span>
+            {isCharging ? (
+              <motion.span>{displayPercentCharging}</motion.span>
+            ) : (
+              <motion.span>{displayPercentNormal}</motion.span>
+            )}
             <span className="text-3xl font-bold ml-1 text-gray-400">%</span>
           </div>
         </div>
