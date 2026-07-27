@@ -857,16 +857,117 @@ export function useBMS() {
     let buffer = rxBufferRef.current;
     let maxLoopAttempts = 40;
 
+    // Helper: Find byte sequence index in array
+    const findSeq = (arr: number[], seq: number[]): number => {
+      for (let i = 0; i <= arr.length - seq.length; i++) {
+        let match = true;
+        for (let j = 0; j < seq.length; j++) {
+          if (arr[i + j] !== seq[j]) {
+            match = false;
+            break;
+          }
+        }
+        if (match) return i;
+      }
+      return -1;
+    };
+
     while (buffer.length > 0 && maxLoopAttempts > 0) {
       maxLoopAttempts--;
 
-      // A) DALY BMS (Header 0xA5)
+      // Find indices of all potential BMS frame headers
+      const jk4EIdx = findSeq(buffer, [0x4E, 0x57]);
+      let jkAAIdx = findSeq(buffer, [0xAA, 0x55]);
+      if (jkAAIdx < 0) jkAAIdx = findSeq(buffer, [0x55, 0xAA]);
+
       const dalyIdx = buffer.indexOf(0xA5);
-      if (dalyIdx >= 0) {
-        if (dalyIdx > 0 && dalyIdx < 30) {
-          buffer = buffer.slice(dalyIdx);
+      const jbdIdx = buffer.indexOf(0xDD);
+
+      let antIdx = findSeq(buffer, [0xDB, 0xDB]);
+      if (antIdx < 0) antIdx = findSeq(buffer, [0x7A, 0x7A]);
+
+      // Collect all candidate header start positions >= 0
+      const candidates: { type: string; index: number }[] = [];
+      if (jk4EIdx >= 0) candidates.push({ type: 'JK_4E', index: jk4EIdx });
+      if (jkAAIdx >= 0) candidates.push({ type: 'JK_AA', index: jkAAIdx });
+      if (dalyIdx >= 0) candidates.push({ type: 'DALY', index: dalyIdx });
+      if (jbdIdx >= 0) candidates.push({ type: 'JBD', index: jbdIdx });
+      if (antIdx >= 0) candidates.push({ type: 'ANT', index: antIdx });
+
+      if (candidates.length === 0) {
+        // Check ASCII or single byte
+        const newlineIdx = buffer.findIndex(b => b === 0x0A || b === 0x0D);
+        if (newlineIdx >= 0) {
+          const lineBytes = buffer.slice(0, newlineIdx);
+          const textLine = String.fromCharCode(...lineBytes).trim();
+          if (textLine.length >= 3) parseAsciiString(textLine);
+          buffer = buffer.slice(newlineIdx + 1);
+          rxBufferRef.current = buffer;
+          continue;
+        }
+
+        if (buffer.length === 1 && (bmsData.detectedProtocol === 'Standard Battery' || bmsData.serviceUUID?.includes('180f'))) {
+          parseStandardBattery(buffer[0]);
+          buffer = [];
+          rxBufferRef.current = buffer;
+          break;
+        }
+
+        if (buffer.length > 300) {
+          buffer = buffer.slice(buffer.length - 100);
           rxBufferRef.current = buffer;
         }
+        break;
+      }
+
+      // Pick the candidate header that appears EARLIEST in the buffer
+      candidates.sort((a, b) => a.index - b.index);
+      const earliest = candidates[0];
+
+      // Slice off leading junk bytes before the earliest valid header
+      if (earliest.index > 0) {
+        buffer = buffer.slice(earliest.index);
+        rxBufferRef.current = buffer;
+      }
+
+      // Process according to the earliest header type
+      if (earliest.type === 'JK_4E') {
+        if (buffer.length >= 4) {
+          const rawLen = (buffer[2] << 8) | buffer[3];
+          const expectedLen = (rawLen >= 10 && rawLen <= 400) ? (rawLen + 4) : 277;
+          if (buffer.length >= expectedLen) {
+            const frame = buffer.slice(0, expectedLen);
+            const dataView = new DataView(new Uint8Array(frame).buffer);
+            parseJkFrame(dataView);
+            buffer = buffer.slice(expectedLen);
+            rxBufferRef.current = buffer;
+            continue;
+          } else if (buffer.length >= 250) {
+            const frame = buffer.slice(0, buffer.length);
+            const dataView = new DataView(new Uint8Array(frame).buffer);
+            parseJkFrame(dataView);
+            buffer = [];
+            rxBufferRef.current = buffer;
+            break;
+          } else {
+            break; // Wait for remaining BLE packets
+          }
+        } else {
+          break;
+        }
+      } else if (earliest.type === 'JK_AA') {
+        if (buffer.length >= 16) {
+          const frameLen = Math.min(buffer.length, 300);
+          const frame = buffer.slice(0, frameLen);
+          const dataView = new DataView(new Uint8Array(frame).buffer);
+          parseJkFrame(dataView);
+          buffer = buffer.slice(frameLen);
+          rxBufferRef.current = buffer;
+          continue;
+        } else {
+          break;
+        }
+      } else if (earliest.type === 'DALY') {
         if (buffer.length >= 13) {
           const frame = buffer.slice(0, 13);
           const dataView = new DataView(new Uint8Array(frame).buffer);
@@ -875,20 +976,12 @@ export function useBMS() {
           rxBufferRef.current = buffer;
           continue;
         } else {
-          break; // Wait for second BLE chunk
+          break;
         }
-      }
-
-      // B) JBD / XIAOXIANG (Header 0xDD)
-      const jbdIdx = buffer.indexOf(0xDD);
-      if (jbdIdx >= 0) {
-        if (jbdIdx > 0 && jbdIdx < 30) {
-          buffer = buffer.slice(jbdIdx);
-          rxBufferRef.current = buffer;
-        }
+      } else if (earliest.type === 'JBD') {
         if (buffer.length >= 4) {
           const dataLength = buffer[3];
-          const totalFrameSize = 4 + dataLength + 3; // header(1) + cmd(1) + status(1) + len(1) + payload(N) + checksum(2) + stop(1)
+          const totalFrameSize = 4 + dataLength + 3;
           if (buffer.length >= totalFrameSize) {
             const frame = buffer.slice(0, totalFrameSize);
             const dataView = new DataView(new Uint8Array(frame).buffer);
@@ -897,88 +990,12 @@ export function useBMS() {
             rxBufferRef.current = buffer;
             continue;
           } else {
-            break; // Wait for remaining bytes of JBD frame
+            break;
           }
         } else {
           break;
         }
-      }
-
-      // C) JK BMS (Headers: 0x4E 0x57 "NW", or 0xAA 0x55 / 0x55 0xAA for JK02/JK04 jkbms.com)
-      let jkIdx = -1;
-      let jkHeaderType = 0; // 1 for 4E57, 2 for AA55/55AA
-      for (let i = 0; i < buffer.length - 1; i++) {
-        if (buffer[i] === 0x4E && buffer[i + 1] === 0x57) {
-          jkIdx = i;
-          jkHeaderType = 1;
-          break;
-        }
-        if ((buffer[i] === 0xAA && buffer[i + 1] === 0x55) || (buffer[i] === 0x55 && buffer[i + 1] === 0xAA)) {
-          jkIdx = i;
-          jkHeaderType = 2;
-          break;
-        }
-      }
-      if (jkIdx >= 0) {
-        if (jkIdx > 0 && jkIdx < 30) {
-          buffer = buffer.slice(jkIdx);
-          rxBufferRef.current = buffer;
-        }
-
-        if (jkHeaderType === 1) {
-          if (buffer.length >= 4) {
-            const rawLen = (buffer[2] << 8) | buffer[3];
-            // Total packet size = payload size + 4 bytes header (0x4E 0x57 + 2 bytes length)
-            const expectedLen = (rawLen >= 10 && rawLen <= 400) ? (rawLen + 4) : 277;
-            if (buffer.length >= expectedLen) {
-              const frame = buffer.slice(0, expectedLen);
-              const dataView = new DataView(new Uint8Array(frame).buffer);
-              parseJkFrame(dataView);
-              buffer = buffer.slice(expectedLen);
-              rxBufferRef.current = buffer;
-              continue;
-            } else if (buffer.length >= 270) {
-              // Partial buffer fallback if exact length calculation varies slightly
-              const frame = buffer.slice(0, buffer.length);
-              const dataView = new DataView(new Uint8Array(frame).buffer);
-              parseJkFrame(dataView);
-              buffer = [];
-              rxBufferRef.current = buffer;
-              break;
-            } else {
-              break; // Wait for remaining BLE packets to complete JK frame
-            }
-          } else {
-            break;
-          }
-        } else if (jkHeaderType === 2) { // AA 55 or 55 AA frame (JK02/JK04/jkbms.com)
-          if (buffer.length >= 16) {
-            const frameLen = Math.min(buffer.length, 300);
-            const frame = buffer.slice(0, frameLen);
-            const dataView = new DataView(new Uint8Array(frame).buffer);
-            parseJkFrame(dataView);
-            buffer = buffer.slice(frameLen);
-            rxBufferRef.current = buffer;
-            continue;
-          } else {
-            break;
-          }
-        }
-      }
-
-      // D) ANT BMS (Header 0xDB 0xDB or 0x7A 0x7A)
-      let antIdx = -1;
-      for (let i = 0; i < buffer.length - 1; i++) {
-        if ((buffer[i] === 0xDB && buffer[i + 1] === 0xDB) || (buffer[i] === 0x7A && buffer[i + 1] === 0x7A)) {
-          antIdx = i;
-          break;
-        }
-      }
-      if (antIdx >= 0) {
-        if (antIdx > 0 && antIdx < 30) {
-          buffer = buffer.slice(antIdx);
-          rxBufferRef.current = buffer;
-        }
+      } else if (earliest.type === 'ANT') {
         if (buffer.length >= 10) {
           const dataView = new DataView(new Uint8Array(buffer).buffer);
           parseAntFrame(dataView);
@@ -988,35 +1005,6 @@ export function useBMS() {
         } else {
           break;
         }
-      }
-
-      // E) ASCII NEWLINE STREAM
-      const newlineIdx = buffer.findIndex(b => b === 0x0A || b === 0x0D);
-      if (newlineIdx >= 0) {
-        const lineBytes = buffer.slice(0, newlineIdx);
-        const textLine = String.fromCharCode(...lineBytes).trim();
-        if (textLine.length >= 3) {
-          parseAsciiString(textLine);
-        }
-        buffer = buffer.slice(newlineIdx + 1);
-        rxBufferRef.current = buffer;
-        continue;
-      }
-
-      // F) SINGLE-BYTE BATTERY LEVEL
-      if (buffer.length === 1 && (bmsData.detectedProtocol === 'Standard Battery' || bmsData.serviceUUID?.includes('180f'))) {
-        parseStandardBattery(buffer[0]);
-        buffer = [];
-        rxBufferRef.current = buffer;
-        break;
-      }
-
-      // Prevent buffer overflow by dropping stale leading byte if no signature matched after 200 bytes
-      if (buffer.length > 200) {
-        buffer = buffer.slice(1);
-        rxBufferRef.current = buffer;
-      } else {
-        break;
       }
     }
   }, [parseDalyFrame, parseJbdFrame, parseJkFrame, parseAntFrame, parseAsciiString, parseStandardBattery, bmsData.detectedProtocol, bmsData.serviceUUID]);
