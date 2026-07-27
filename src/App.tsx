@@ -344,6 +344,20 @@ export default function App() {
                 </div>
               ) : (
                 <div className="w-full space-y-3">
+                  {!bmsData.chargeDischargeActive && (
+                    <div className="w-full bg-red-50 border-2 border-red-200 rounded-3xl p-4 flex items-center justify-between text-red-700 shadow-sm animate-pulse">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-2xl bg-red-600 text-white flex items-center justify-center shrink-0">
+                          <Lock size={20} />
+                        </div>
+                        <div>
+                          <span className="text-xs font-black uppercase tracking-wider block">KILL SWITCH ACTIVATED</span>
+                          <span className="text-[11px] font-medium text-red-600">MOSFET Cutoff: Charge & Discharge are turned OFF (0.0A)</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                   <div className="grid grid-cols-2 gap-3">
                     <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
                       <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Pack Voltage</span>
@@ -539,6 +553,50 @@ export default function App() {
                 <Keypad onUnlock={() => setControlsUnlocked(true)} />
               ) : (
                 <>
+                  {/* Battery Kill Switch / MOSFET Cutoff Control */}
+                  <div className={`rounded-3xl p-6 shadow-[0_8px_30px_rgba(0,0,0,0.04)] border transition-all ${
+                    bmsData.chargeDischargeActive 
+                      ? 'bg-white border-gray-100' 
+                      : 'bg-red-50/80 border-red-200'
+                  }`}>
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-4">
+                        <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${
+                          bmsData.chargeDischargeActive ? 'bg-emerald-50 text-emerald-600' : 'bg-red-600 text-white animate-pulse'
+                        }`}>
+                          <Power size={24} />
+                        </div>
+                        <div>
+                          <h3 className="text-base font-bold text-gray-900">Battery Kill Switch</h3>
+                          <p className="text-xs font-medium text-gray-500">
+                            {bmsData.chargeDischargeActive 
+                              ? 'Charge & Discharge MOSFET Active' 
+                              : '⚠️ CUTOFF: Current & Power Stopped (0.0A)'}
+                          </p>
+                        </div>
+                      </div>
+
+                      <button
+                        onClick={toggleAntiTheft}
+                        className={`px-3 py-2 rounded-2xl text-xs font-bold transition-all shadow-sm ${
+                          bmsData.chargeDischargeActive
+                            ? 'bg-red-600 hover:bg-red-700 active:bg-red-800 text-white'
+                            : 'bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white'
+                        }`}
+                      >
+                        {bmsData.chargeDischargeActive ? 'KILL SWITCH (OFF)' : 'RESTORE POWER (ON)'}
+                      </button>
+                    </div>
+
+                    <div className="pt-2 border-t border-gray-100">
+                      <SwipeAction 
+                        label={bmsData.chargeDischargeActive ? "Swipe to Cutoff Battery Power" : "Swipe to Enable Charge & Discharge"}
+                        icon={bmsData.chargeDischargeActive ? Lock : Unlock}
+                        active={!bmsData.chargeDischargeActive}
+                        onAction={toggleAntiTheft}
+                      />
+                    </div>
+                  </div>
                   <div className="bg-white rounded-3xl p-6 shadow-[0_8px_30px_rgba(0,0,0,0.04)]">
                     <div className="flex items-center justify-between mb-8">
                       <div className="flex items-center gap-4">

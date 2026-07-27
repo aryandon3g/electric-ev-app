@@ -288,7 +288,6 @@ export function useBMS() {
       setBmsData(prev => {
         const smoothedV = Number(smootherRef.current.getSmoothedVoltage(rawVolts).toFixed(2));
         const capacityAH = (rawSoc / 100) * prev.nominalCapacityAH;
-        const power = Number((smoothedV * rawCurr).toFixed(1));
         const estRange = computeDynamicRange(
           smoothedV,
           rawSoc,
@@ -300,14 +299,21 @@ export function useBMS() {
           prev.maxVoltage
         );
 
-        let status: BMSData['status'] = 'Normal';
-        if (rawCurr > 0.5) status = 'Charging';
-        else if (rawCurr < -0.5) status = 'Discharging';
+        const isMosfetActive = prev.chargeDischargeActive;
+        const current = isMosfetActive ? rawCurr : 0.0;
+        const power = isMosfetActive ? Number((smoothedV * rawCurr).toFixed(1)) : 0.0;
+
+        let status: BMSData['status'] = 'MOSFET Off';
+        if (isMosfetActive) {
+          if (rawCurr > 0.5) status = 'Charging';
+          else if (rawCurr < -0.5) status = 'Discharging';
+          else status = 'Normal';
+        }
 
         return {
           ...prev,
           voltage: smoothedV,
-          current: rawCurr,
+          current,
           capacityPercent: rawSoc,
           remainingCapacityAH: capacityAH,
           power,
@@ -474,11 +480,17 @@ export function useBMS() {
           prev.minVoltage,
           prev.maxVoltage
         );
-        const power = Number((smoothedV * rawCurr).toFixed(1));
 
-        let currentStatus: BMSData['status'] = 'Normal';
-        if (rawCurr > 0.5) currentStatus = 'Charging';
-        else if (rawCurr < -0.5) currentStatus = 'Discharging';
+        const isMosfetActive = prev.chargeDischargeActive;
+        const current = isMosfetActive ? rawCurr : 0.0;
+        const power = isMosfetActive ? Number((smoothedV * rawCurr).toFixed(1)) : 0.0;
+
+        let currentStatus: BMSData['status'] = 'MOSFET Off';
+        if (isMosfetActive) {
+          if (rawCurr > 0.5) currentStatus = 'Charging';
+          else if (rawCurr < -0.5) currentStatus = 'Discharging';
+          else currentStatus = 'Normal';
+        }
 
         // Update balancing state on cells if balance mask present
         const updatedCells = prev.cells.map((cell, idx) => ({
@@ -491,7 +503,7 @@ export function useBMS() {
         return {
           ...prev,
           voltage: smoothedV,
-          current: rawCurr,
+          current,
           capacityPercent: rawSoc,
           remainingCapacityAH: remainingAH,
           nominalCapacityAH: nominalAH > 0 ? nominalAH : prev.nominalCapacityAH,
@@ -630,7 +642,6 @@ export function useBMS() {
 
     setBmsData(prev => {
       const smoothedV = parsedV > 0 ? Number(smootherRef.current.getSmoothedVoltage(parsedV).toFixed(2)) : prev.voltage;
-      const power = Number((smoothedV * parsedI).toFixed(1));
       const activeSoc = parsedSoc > 0 && parsedSoc <= 100 ? parsedSoc : prev.capacityPercent;
       const estRange = computeDynamicRange(
         smoothedV,
@@ -643,14 +654,21 @@ export function useBMS() {
         prev.maxVoltage
       );
 
-      let currentStatus: BMSData['status'] = 'Normal';
-      if (parsedI > 0.5) currentStatus = 'Charging';
-      else if (parsedI < -0.5) currentStatus = 'Discharging';
+      const isMosfetActive = prev.chargeDischargeActive;
+      const current = isMosfetActive ? parsedI : 0.0;
+      const power = isMosfetActive ? Number((smoothedV * parsedI).toFixed(1)) : 0.0;
+
+      let currentStatus: BMSData['status'] = 'MOSFET Off';
+      if (isMosfetActive) {
+        if (parsedI > 0.5) currentStatus = 'Charging';
+        else if (parsedI < -0.5) currentStatus = 'Discharging';
+        else currentStatus = 'Normal';
+      }
 
       return {
         ...prev,
         voltage: smoothedV,
-        current: parsedI,
+        current,
         capacityPercent: activeSoc,
         temperature: parsedTemp !== 0 ? parsedTemp : prev.temperature,
         cycleCount: parsedCycles > 0 ? parsedCycles : prev.cycleCount,
@@ -1235,16 +1253,35 @@ export function useBMS() {
 
   const toggleAntiTheft = useCallback(() => {
     setBmsData(prev => {
-      const nextLocked = !prev.isLocked;
-      const nextMosfetOn = !nextLocked;
-      addHexLog('SYS', 'MOSFET_STATE', `Charge & Discharge MOSFET output set to: ${nextMosfetOn ? 'ON (Active)' : 'OFF (Locked)'}`);
+      const nextMosfetOn = !prev.chargeDischargeActive;
+      const nextLocked = !nextMosfetOn;
+      
+      addHexLog('SYS', 'MOSFET_STATE', `Kill Switch / MOSFET set to: ${nextMosfetOn ? 'ON (Charge & Discharge Active)' : 'OFF (Kill Switch Cutoff)'}`);
+      
+      // If connected via BLE, send hardware MOS control frames
+      if (writeCharRef.current) {
+        if (prev.detectedProtocol === 'Daly') {
+          const byteVal = nextMosfetOn ? 0x01 : 0x00;
+          sendHexCommand([0xA5, 0x40, 0xD9, 0x08, byteVal, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, nextMosfetOn ? 0xBF : 0xBE]);
+        } else if (prev.detectedProtocol === 'JBD/Xiaoxiang') {
+          const mosVal = nextMosfetOn ? 0x00 : 0x03;
+          sendHexCommand([0xDD, 0x5A, 0xE1, 0x02, 0x00, mosVal, 0xFF, nextMosfetOn ? 0x1D : 0x1A, 0x77]);
+        } else if (prev.detectedProtocol === 'JK BMS') {
+          const mosVal = nextMosfetOn ? 0x01 : 0x02;
+          sendHexCommand([0x4E, 0x57, 0x00, 0x13, 0x00, 0x00, 0x00, 0x00, 0x06, mosVal, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x68, 0x00, 0x00, 0x01, nextMosfetOn ? 0x27 : 0x28]);
+        }
+      }
+
       return {
         ...prev,
         isLocked: nextLocked,
-        chargeDischargeActive: nextMosfetOn
+        chargeDischargeActive: nextMosfetOn,
+        current: nextMosfetOn ? prev.current : 0.0,
+        power: nextMosfetOn ? prev.power : 0.0,
+        status: nextMosfetOn ? 'Normal' : 'MOSFET Off'
       };
     });
-  }, [addHexLog]);
+  }, [addHexLog, sendHexCommand]);
 
   const setChargeLimit = useCallback((limit: number) => {
     setBmsData(prev => ({ ...prev, chargeLimit: limit }));
