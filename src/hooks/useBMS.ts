@@ -50,16 +50,27 @@ const ALL_OPTIONAL_SERVICES = [
   BMS_UUIDS.ANT.SERVICE,
   '0000ffe0-0000-1000-8000-00805f9b34fb',
   '0000ffe1-0000-1000-8000-00805f9b34fb',
+  '0000ffe2-0000-1000-8000-00805f9b34fb',
+  '0000ffe3-0000-1000-8000-00805f9b34fb',
+  '0000ffe4-0000-1000-8000-00805f9b34fb',
   '0000ffe5-0000-1000-8000-00805f9b34fb',
+  '0000ff00-0000-1000-8000-00805f9b34fb',
+  '0000ff01-0000-1000-8000-00805f9b34fb',
+  '0000ff02-0000-1000-8000-00805f9b34fb',
+  '0000fee0-0000-1000-8000-00805f9b34fb',
+  '0000fee1-0000-1000-8000-00805f9b34fb',
   '0000e7e0-0000-1000-8000-00805f9b34fb',
   '0000e7e1-0000-1000-8000-00805f9b34fb',
-  '0000ff00-0000-1000-8000-00805f9b34fb',
+  '0000e7e2-0000-1000-8000-00805f9b34fb',
   '6e400001-b5a3-f393-e0a9-e50e24dcca9e',
+  '6e400002-b5a3-f393-e0a9-e50e24dcca9e',
+  '6e400003-b5a3-f393-e0a9-e50e24dcca9e',
   '00001000-0000-1000-8000-00805f9b34fb',
   '0000a002-0000-1000-8000-00805f9b34fb',
   '00000001-0000-1000-8000-00805f9b34fb',
   '0000f00d-0000-1000-8000-00805f9b34fb',
-  '0000180f-0000-1000-8000-00805f9b34fb'
+  '0000180f-0000-1000-8000-00805f9b34fb',
+  '00001800-0000-1000-8000-00805f9b34fb'
 ];
 
 // Preset Hex Commands
@@ -103,7 +114,12 @@ export const BMS_PRESET_COMMANDS = {
     bytes: [0xDD, 0xA5, 0x04, 0x00, 0xFF, 0xFC, 0x77]
   },
 
-  // JK BMS Commands (Classic NW + JK02/JK04 jkbms.com + Bike Handshake)
+  // JK BMS Commands (Classic NW + JK02/JK04 jkbms.com + Bike Handshake + Wake)
+  JK_WAKE_PULSE: {
+    name: 'JK BMS Wake Pulse (0x00)',
+    hex: '00',
+    bytes: [0x00]
+  },
   JK_READ_ALL_INFO: {
     name: 'JK BMS Read Telemetry (Classic 0x4E 0x57)',
     hex: '4E 57 00 13 00 00 00 00 06 03 00 00 00 00 00 00 68 00 00 01 29',
@@ -677,6 +693,30 @@ export function useBMS() {
       }
     }
 
+    // UNIVERSAL TLV SEARCH FALLBACK: If voltage is still 0, scan entire buffer for tags 0x83 (Voltage), 0x84 (Current), 0x85 (SOC)
+    if (parsedV === 0 && dataView.byteLength >= 6) {
+      for (let i = 0; i < dataView.byteLength - 2; i++) {
+        const tag = dataView.getUint8(i);
+        if (tag === 0x83 && i + 2 < dataView.byteLength) {
+          const testV = ((dataView.getUint8(i + 1) << 8) | dataView.getUint8(i + 2)) / 100;
+          if (testV >= 10 && testV <= 150) {
+            parsedV = testV;
+          }
+        } else if (tag === 0x85 && i + 1 < dataView.byteLength && parsedSoc === 0) {
+          const testSoc = dataView.getUint8(i + 1);
+          if (testSoc > 0 && testSoc <= 100) {
+            parsedSoc = testSoc;
+          }
+        } else if (tag === 0x84 && i + 2 < dataView.byteLength && parsedI === 0) {
+          const rawI = (dataView.getUint8(i + 1) << 8) | dataView.getUint8(i + 2);
+          const testI = (rawI > 32767 ? rawI - 65536 : rawI) / 100;
+          if (Math.abs(testI) < 300) {
+            parsedI = testI;
+          }
+        }
+      }
+    }
+
     // Fallback 1: If cells were parsed, compute total pack voltage from sum of cell voltages
     if (parsedV === 0 && parsedCells.length > 0) {
       const sumV = parsedCells.reduce((acc, c) => acc + c.voltage, 0);
@@ -1057,11 +1097,12 @@ export function useBMS() {
       sendHexCommand(BMS_PRESET_COMMANDS.JBD_READ_BASIC_INFO.bytes);
       setTimeout(() => sendHexCommand(BMS_PRESET_COMMANDS.JBD_READ_CELL_VOLTAGES.bytes), 300);
     } else if (bmsData.detectedProtocol === 'JK BMS') {
-      sendHexCommand(BMS_PRESET_COMMANDS.JK_READ_ALL_INFO.bytes);
-      setTimeout(() => sendHexCommand(BMS_PRESET_COMMANDS.JK_READ_DEVICE_INFO.bytes), 150);
-      setTimeout(() => sendHexCommand(BMS_PRESET_COMMANDS.JK02_READ_INFO.bytes), 300);
-      setTimeout(() => sendHexCommand(BMS_PRESET_COMMANDS.JK_HANDSHAKE.bytes), 450);
-      setTimeout(() => sendHexCommand(BMS_PRESET_COMMANDS.JK02_WAKE_INFO.bytes), 600);
+      sendHexCommand(BMS_PRESET_COMMANDS.JK_WAKE_PULSE.bytes);
+      setTimeout(() => sendHexCommand(BMS_PRESET_COMMANDS.JK_READ_ALL_INFO.bytes), 100);
+      setTimeout(() => sendHexCommand(BMS_PRESET_COMMANDS.JK_READ_DEVICE_INFO.bytes), 250);
+      setTimeout(() => sendHexCommand(BMS_PRESET_COMMANDS.JK02_READ_INFO.bytes), 400);
+      setTimeout(() => sendHexCommand(BMS_PRESET_COMMANDS.JK_HANDSHAKE.bytes), 550);
+      setTimeout(() => sendHexCommand(BMS_PRESET_COMMANDS.JK02_WAKE_INFO.bytes), 700);
     } else if (bmsData.detectedProtocol === 'ANT BMS') {
       sendHexCommand(BMS_PRESET_COMMANDS.ANT_READ_TELEMETRY.bytes);
     } else {
