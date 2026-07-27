@@ -103,11 +103,21 @@ export const BMS_PRESET_COMMANDS = {
     bytes: [0xDD, 0xA5, 0x04, 0x00, 0xFF, 0xFC, 0x77]
   },
 
-  // JK BMS Commands (Classic NW + JK02/JK04 jkbms.com)
+  // JK BMS Commands (Classic NW + JK02/JK04 jkbms.com + Bike Handshake)
   JK_READ_ALL_INFO: {
     name: 'JK BMS Read Telemetry (Classic 0x4E 0x57)',
     hex: '4E 57 00 13 00 00 00 00 06 03 00 00 00 00 00 00 68 00 00 01 29',
     bytes: [0x4E, 0x57, 0x00, 0x13, 0x00, 0x00, 0x00, 0x00, 0x06, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x68, 0x00, 0x00, 0x01, 0x29]
+  },
+  JK_READ_DEVICE_INFO: {
+    name: 'JK BMS Read Device Status (Classic 0x03 0x03)',
+    hex: '4E 57 00 13 00 00 00 00 03 03 00 00 00 00 00 00 68 00 00 01 26',
+    bytes: [0x4E, 0x57, 0x00, 0x13, 0x00, 0x00, 0x00, 0x00, 0x03, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x68, 0x00, 0x00, 0x01, 0x26]
+  },
+  JK_HANDSHAKE: {
+    name: 'JK BMS Handshake / Wake',
+    hex: '4E 57 00 13 00 00 00 00 01 00 00 00 00 00 00 00 00 00 00 01 1D',
+    bytes: [0x4E, 0x57, 0x00, 0x13, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x1D]
   },
   JK02_READ_INFO: {
     name: 'JK02 / JK04 / jkbms.com Read Telemetry',
@@ -555,94 +565,135 @@ export function useBMS() {
     const h0 = dataView.byteLength >= 1 ? dataView.getUint8(0) : 0;
     const h1 = dataView.byteLength >= 2 ? dataView.getUint8(1) : 0;
 
-    let offset = (h0 === 0x4E && h1 === 0x57) ? 10 : 2;
+    if (h0 === 0x4E && h1 === 0x57) {
+      // JK Classic Protocol (0x4E 0x57)
+      let offset = 10;
 
-    while (offset < dataView.byteLength - 2) {
-      const tag = dataView.getUint8(offset);
-      offset++;
+      while (offset < dataView.byteLength - 2) {
+        const tag = dataView.getUint8(offset);
+        offset++;
 
-      if (tag === 0x79) { // Cell voltages list
-        if (offset < dataView.byteLength) {
-          const len = dataView.getUint8(offset);
-          offset++;
-          const cellCount = Math.floor(len / 3);
-          for (let i = 0; i < cellCount && (offset + 2) < dataView.byteLength; i++) {
-            const cellV = ((dataView.getUint8(offset + 1) << 8) | dataView.getUint8(offset + 2)) / 1000;
-            if (cellV > 0 && cellV < 5.0) {
-              parsedCells.push({
-                id: i + 1,
-                voltage: cellV,
-                isBalancing: false,
-                healthStatus: cellV < 2.9 || cellV > 4.25 ? 'Warning' : 'Good'
-              });
+        if (tag === 0x79) { // Cell Voltages List
+          if (offset < dataView.byteLength) {
+            const len = dataView.getUint8(offset);
+            offset++;
+            const cellCount = Math.floor(len / 3);
+            for (let i = 0; i < cellCount && (offset + 2) < dataView.byteLength; i++) {
+              const cellNo = dataView.getUint8(offset);
+              const cellV = ((dataView.getUint8(offset + 1) << 8) | dataView.getUint8(offset + 2)) / 1000;
+              if (cellV > 0 && cellV < 5.5) {
+                parsedCells.push({
+                  id: cellNo || (i + 1),
+                  voltage: cellV,
+                  isBalancing: false,
+                  healthStatus: cellV < 2.9 || cellV > 4.25 ? 'Warning' : 'Good'
+                });
+              }
+              offset += 3;
             }
-            offset += 3;
           }
-        }
-      } else if (tag === 0x80 || tag === 0x81 || tag === 0x82) { // Temperatures
-        if (offset + 1 < dataView.byteLength) {
-          const rawT = (dataView.getUint8(offset) << 8) | dataView.getUint8(offset + 1);
-          const tempVal = rawT > 32767 ? rawT - 65536 : rawT;
-          if (tempVal > -40 && tempVal < 120) {
-            parsedTemp = tempVal;
+        } else if (tag === 0x80 || tag === 0x81 || tag === 0x82) { // Temperatures
+          if (offset + 1 < dataView.byteLength) {
+            const rawT = (dataView.getUint8(offset) << 8) | dataView.getUint8(offset + 1);
+            let tempVal = rawT > 32767 ? rawT - 65536 : rawT;
+            if (tempVal > 100) tempVal = tempVal - 100;
+            if (tempVal > -40 && tempVal < 120) {
+              parsedTemp = tempVal;
+            }
+            offset += 2;
           }
-          offset += 2;
+        } else if (tag === 0x83) { // Total Pack Voltage (0.01V)
+          if (offset + 1 < dataView.byteLength) {
+            parsedV = ((dataView.getUint8(offset) << 8) | dataView.getUint8(offset + 1)) / 100;
+            offset += 2;
+          }
+        } else if (tag === 0x84) { // Current (0.01A)
+          if (offset + 1 < dataView.byteLength) {
+            const rawI = (dataView.getUint8(offset) << 8) | dataView.getUint8(offset + 1);
+            if (rawI & 0x8000) {
+              parsedI = -((rawI & 0x7FFF) / 100);
+            } else {
+              parsedI = (rawI > 32767 ? rawI - 65536 : rawI) / 100;
+            }
+            offset += 2;
+          }
+        } else if (tag === 0x85) { // SOC %
+          if (offset < dataView.byteLength) {
+            parsedSoc = dataView.getUint8(offset);
+            offset += 1;
+          }
+        } else if (tag === 0x87) { // Cycle count (2 bytes)
+          if (offset + 1 < dataView.byteLength) {
+            parsedCycles = (dataView.getUint8(offset) << 8) | dataView.getUint8(offset + 1);
+            offset += 2;
+          }
+        } else if (tag === 0x86 || tag === 0xA3 || tag === 0xA4 || tag === 0xC0) {
+          offset += 1; // 1-byte tags
+        } else if (
+          tag === 0x8C || tag === 0x8E || tag === 0x8F || tag === 0x90 || 
+          tag === 0x91 || tag === 0x92 || tag === 0x93 || tag === 0x94 || 
+          tag === 0x95 || tag === 0x96 || tag === 0x97 || tag === 0x98 || 
+          tag === 0x99 || tag === 0x9A || tag === 0x9B || tag === 0x9C || 
+          tag === 0x9D || tag === 0x9E || tag === 0x9F || (tag >= 0xB0 && tag <= 0xB3)
+        ) {
+          offset += 2; // 2-byte tags
+        } else if (
+          tag === 0x88 || tag === 0x89 || tag === 0x8A || tag === 0x8B || 
+          tag === 0xA0 || tag === 0xA1 || tag === 0xA2 || tag === 0xA5 || 
+          tag === 0xAA || tag === 0xAB || tag === 0xAC || tag === 0xB4 || 
+          tag === 0xB5 || tag === 0xB8
+        ) {
+          offset += 4; // 4-byte tags
+        } else if (tag === 0xA6 || tag === 0xA7 || tag === 0xA8 || tag === 0xA9 || tag === 0xB6 || tag === 0xB7) {
+          offset += 16; // 16-byte string tags
+        } else {
+          offset += 2; // Default safe advance
         }
-      } else if (tag === 0x83) { // Total Pack Voltage (0.01V)
-        if (offset + 1 < dataView.byteLength) {
-          parsedV = ((dataView.getUint8(offset) << 8) | dataView.getUint8(offset + 1)) / 100;
-          offset += 2;
+      }
+    } else if ((h0 === 0xAA && h1 === 0x55) || (h0 === 0x55 && h1 === 0xAA)) {
+      // JK02 / JK04 / Bike BMS frame parsing
+      if (dataView.byteLength >= 10) {
+        const rawVolts = ((dataView.getUint8(4) << 8) | dataView.getUint8(5)) / 100;
+        if (rawVolts >= 10 && rawVolts <= 150) {
+          parsedV = rawVolts;
         }
-      } else if (tag === 0x84) { // Current (0.01A)
-        if (offset + 1 < dataView.byteLength) {
-          const rawI = (dataView.getUint8(offset) << 8) | dataView.getUint8(offset + 1);
+        if (dataView.byteLength >= 8) {
+          const rawI = (dataView.getUint8(6) << 8) | dataView.getUint8(7);
           parsedI = (rawI > 32767 ? rawI - 65536 : rawI) / 100;
-          offset += 2;
         }
-      } else if (tag === 0x85) { // SOC %
-        if (offset < dataView.byteLength) {
-          parsedSoc = dataView.getUint8(offset);
-          offset += 1;
+        if (dataView.byteLength >= 9) {
+          const socVal = dataView.getUint8(8);
+          if (socVal > 0 && socVal <= 100) {
+            parsedSoc = socVal;
+          }
         }
-      } else if (tag === 0x87) { // Cycle count (2 bytes)
-        if (offset + 1 < dataView.byteLength) {
-          parsedCycles = (dataView.getUint8(offset) << 8) | dataView.getUint8(offset + 1);
-          offset += 2;
+        if (dataView.byteLength >= 11) {
+          const rawT = (dataView.getUint8(9) << 8) | dataView.getUint8(10);
+          const tVal = rawT > 32767 ? rawT - 65536 : rawT;
+          if (tVal > -40 && tVal < 120) {
+            parsedTemp = tVal;
+          }
         }
-      } else if (tag === 0x8A || tag === 0x8B) { // Total cycle count (4 bytes)
-        if (offset + 3 < dataView.byteLength) {
-          parsedCycles = (dataView.getUint8(offset) << 24) | (dataView.getUint8(offset + 1) << 16) | (dataView.getUint8(offset + 2) << 8) | dataView.getUint8(offset + 3);
-          offset += 4;
-        }
-      } else {
-        offset += 1; // Default 1-byte advance for flexible TLV search
       }
     }
 
-    // Positional fallback decoding for JK02 / JK04 jkbms.com frames if TLV tag 0x83 was missing
-    if (parsedV === 0 && dataView.byteLength >= 10) {
-      const posV = ((dataView.getUint8(4) << 8) | dataView.getUint8(5)) / 100;
-      if (posV >= 10 && posV <= 150) {
-        parsedV = posV;
-      }
-      if (dataView.byteLength >= 8) {
-        const rawI = (dataView.getUint8(6) << 8) | dataView.getUint8(7);
-        const posI = (rawI > 32767 ? rawI - 65536 : rawI) / 100;
-        if (Math.abs(posI) < 500) {
-          parsedI = posI;
-        }
-      }
-      if (parsedSoc === 0 && dataView.byteLength >= 9) {
-        const posSoc = dataView.getUint8(8);
-        if (posSoc > 0 && posSoc <= 100) {
-          parsedSoc = posSoc;
-        }
+    // Fallback 1: If cells were parsed, compute total pack voltage from sum of cell voltages
+    if (parsedV === 0 && parsedCells.length > 0) {
+      const sumV = parsedCells.reduce((acc, c) => acc + c.voltage, 0);
+      if (sumV > 0) {
+        parsedV = Number(sumV.toFixed(2));
       }
     }
 
     setBmsData(prev => {
       const smoothedV = parsedV > 0 ? Number(smootherRef.current.getSmoothedVoltage(parsedV).toFixed(2)) : prev.voltage;
-      const activeSoc = parsedSoc > 0 && parsedSoc <= 100 ? parsedSoc : prev.capacityPercent;
+      
+      // Fallback 2: Calculate SOC from voltage if raw SOC is missing/0
+      let activeSoc = parsedSoc > 0 && parsedSoc <= 100 ? parsedSoc : prev.capacityPercent;
+      if (activeSoc === 0 && smoothedV > prev.minVoltage && prev.maxVoltage > prev.minVoltage) {
+        activeSoc = Math.min(100, Math.max(0, Math.round(((smoothedV - prev.minVoltage) / (prev.maxVoltage - prev.minVoltage)) * 100)));
+      }
+
       const estRange = computeDynamicRange(
         smoothedV,
         activeSoc,
@@ -837,7 +888,8 @@ export function useBMS() {
         if (jkHeaderType === 1) {
           if (buffer.length >= 4) {
             const rawLen = (buffer[2] << 8) | buffer[3];
-            const expectedLen = (rawLen >= 10 && rawLen <= 400) ? rawLen : 273;
+            // Total packet size = payload size + 4 bytes header (0x4E 0x57 + 2 bytes length)
+            const expectedLen = (rawLen >= 10 && rawLen <= 400) ? (rawLen + 4) : 277;
             if (buffer.length >= expectedLen) {
               const frame = buffer.slice(0, expectedLen);
               const dataView = new DataView(new Uint8Array(frame).buffer);
@@ -845,6 +897,14 @@ export function useBMS() {
               buffer = buffer.slice(expectedLen);
               rxBufferRef.current = buffer;
               continue;
+            } else if (buffer.length >= 270) {
+              // Partial buffer fallback if exact length calculation varies slightly
+              const frame = buffer.slice(0, buffer.length);
+              const dataView = new DataView(new Uint8Array(frame).buffer);
+              parseJkFrame(dataView);
+              buffer = [];
+              rxBufferRef.current = buffer;
+              break;
             } else {
               break; // Wait for remaining BLE packets to complete JK frame
             }
@@ -998,8 +1058,10 @@ export function useBMS() {
       setTimeout(() => sendHexCommand(BMS_PRESET_COMMANDS.JBD_READ_CELL_VOLTAGES.bytes), 300);
     } else if (bmsData.detectedProtocol === 'JK BMS') {
       sendHexCommand(BMS_PRESET_COMMANDS.JK_READ_ALL_INFO.bytes);
-      setTimeout(() => sendHexCommand(BMS_PRESET_COMMANDS.JK02_READ_INFO.bytes), 150);
-      setTimeout(() => sendHexCommand(BMS_PRESET_COMMANDS.JK02_WAKE_INFO.bytes), 300);
+      setTimeout(() => sendHexCommand(BMS_PRESET_COMMANDS.JK_READ_DEVICE_INFO.bytes), 150);
+      setTimeout(() => sendHexCommand(BMS_PRESET_COMMANDS.JK02_READ_INFO.bytes), 300);
+      setTimeout(() => sendHexCommand(BMS_PRESET_COMMANDS.JK_HANDSHAKE.bytes), 450);
+      setTimeout(() => sendHexCommand(BMS_PRESET_COMMANDS.JK02_WAKE_INFO.bytes), 600);
     } else if (bmsData.detectedProtocol === 'ANT BMS') {
       sendHexCommand(BMS_PRESET_COMMANDS.ANT_READ_TELEMETRY.bytes);
     } else {
@@ -1058,9 +1120,25 @@ export function useBMS() {
       setDeviceName(device.name || 'BMS BLE Device');
       addHexLog('SYS', 'PAIRING', `Selected Device: ${device.name || 'Unnamed BMS'} [${device.id}]`);
 
-      // Device Name Auto-Protocol Detection (Okinawa / Yukinava / JK / Daly / JBD / ANT)
+      // Device Name Auto-Protocol Detection (Okinawa / Yukinava / JK / Daly / JBD / ANT / E-Bikes)
       const nameUpper = (device.name || '').toUpperCase();
-      if (nameUpper.includes('JK') || nameUpper.includes('NW') || nameUpper.includes('YUKINAVA') || nameUpper.includes('OKINAWA')) {
+      if (
+        nameUpper.includes('JK') || 
+        nameUpper.includes('NW') || 
+        nameUpper.includes('YUKINAVA') || 
+        nameUpper.includes('OKINAWA') ||
+        nameUpper.includes('REVOLT') ||
+        nameUpper.includes('AMPERE') ||
+        nameUpper.includes('HERO') ||
+        nameUpper.includes('PURE') ||
+        nameUpper.includes('ATHER') ||
+        nameUpper.includes('BGAUSS') ||
+        nameUpper.includes('OKAYA') ||
+        nameUpper.includes('KOMAKI') ||
+        nameUpper.includes('BIKE') ||
+        nameUpper.includes('SCOOTER') ||
+        nameUpper.includes('SMARTBMS')
+      ) {
         setBmsData(prev => ({ ...prev, detectedProtocol: 'JK BMS' }));
         addHexLog('SYS', 'AUTO_DETECT', 'Auto-detected protocol from device name: JK BMS');
       } else if (nameUpper.includes('XIAOXIANG') || nameUpper.includes('JBD')) {
@@ -1208,7 +1286,20 @@ export function useBMS() {
       // JBD Basic Info mock frame: 58.40V, 1.20A, 88% SOC, 28°C
       mockBytes = [0xDD, 0x03, 0x00, 0x1B, 0x16, 0xD0, 0x00, 0x78, 0x09, 0xC4, 0x0B, 0xB8, 0x00, 0x2A, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x20, 0x58, 0x03, 0x01, 0x0B, 0xBA, 0x77];
     } else {
-      mockBytes = [0x4E, 0x57, 0x00, 0x13, 0x00, 0x00, 0x00, 0x00, 0x06, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x68, 0x00, 0x00, 0x01, 0x29];
+      // JK BMS Full Telemetry frame: 16 cells (3.65V each), 58.40V Total, 1.50A Current, 88% SOC, 28°C, 45 Cycles
+      mockBytes = [
+        0x4E, 0x57, 0x00, 0x55, 0x00, 0x00, 0x00, 0x00, 0x06, 0x00, 0x01, 0x00, 0x00, 0x00, // Header
+        0x79, 0x30, // Tag 0x79 (Cell voltages: 16 cells x 3 bytes = 48 bytes)
+        0x01, 0x0E, 0x42, 0x02, 0x0E, 0x42, 0x03, 0x0E, 0x42, 0x04, 0x0E, 0x42,
+        0x05, 0x0E, 0x42, 0x06, 0x0E, 0x42, 0x07, 0x0E, 0x42, 0x08, 0x0E, 0x42,
+        0x09, 0x0E, 0x42, 0x0A, 0x0E, 0x42, 0x0B, 0x0E, 0x42, 0x0C, 0x0E, 0x42,
+        0x0D, 0x0E, 0x42, 0x0E, 0x0E, 0x42, 0x0F, 0x0E, 0x42, 0x10, 0x0E, 0x42,
+        0x80, 0x00, 0x1C, // Tag 0x80 Temp 28°C
+        0x83, 0x16, 0xD0, // Tag 0x83 Total Pack Voltage 58.40V
+        0x84, 0x00, 0x96, // Tag 0x84 Current 1.50A
+        0x85, 0x58,       // Tag 0x85 SOC 88%
+        0x87, 0x00, 0x2D  // Tag 0x87 Cycles 45
+      ];
     }
 
     const dataView = new DataView(new Uint8Array(mockBytes).buffer);

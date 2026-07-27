@@ -18,7 +18,7 @@ export interface BMSData {
   current: number;
   capacityPercent: number;
   temperature: number;
-  status: 'Normal' | 'Charging' | 'Discharging' | 'Warning' | 'Error' | 'Disconnected';
+  status: 'Normal' | 'Charging' | 'Discharging' | 'Warning' | 'Error' | 'Disconnected' | 'MOSFET Off';
   power: number; // Watts
   remainingCapacityAH: number;
   nominalCapacityAH: number;
@@ -51,7 +51,7 @@ export interface BMSData {
   serviceUUID?: string;
   notifyCharUUID?: string;
   writeCharUUID?: string;
-  detectedProtocol?: 'Daly' | 'JBD/Xiaoxiang' | 'Nordic UART' | 'Standard Battery' | 'Unknown';
+  detectedProtocol?: 'Daly' | 'JBD/Xiaoxiang' | 'JK BMS' | 'ANT BMS' | 'Nordic UART' | 'Standard Battery' | 'Unknown';
   rawHexLogs: BLEHexLog[];
   autoPollEnabled: boolean;
   pollingIntervalMs: number;

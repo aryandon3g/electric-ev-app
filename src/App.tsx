@@ -6,7 +6,7 @@ import {
   Bluetooth, BluetoothOff, Lock, Unlock, 
   Activity, Settings, Thermometer, Battery, 
   ShieldCheck, Zap, Moon, Clock, Map, FileWarning, AlertCircle,
-  Delete, Terminal, Send, RefreshCw, Trash2, Cpu, Radio, CheckCircle2
+  Delete, Terminal, Send, RefreshCw, Trash2, Cpu, Radio, CheckCircle2, Power
 } from 'lucide-react';
 import { CellData, BLEHexLog } from './types';
 
