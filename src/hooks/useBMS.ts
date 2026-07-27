@@ -142,7 +142,12 @@ export class VoltageSmoother {
     this.windowMs = windowSeconds * 1000;
   }
 
+  reset() {
+    this.history = [];
+  }
+
   getSmoothedVoltage(newVoltage: number): number {
+    if (newVoltage <= 0) return 0;
     const now = Date.now();
     this.history.push({ value: newVoltage, timestamp: now });
     this.history = this.history.filter(item => now - item.timestamp <= this.windowMs);
@@ -371,16 +376,23 @@ export function useBMS() {
       const nominalAH = ((dataView.getUint8(10) << 8) | dataView.getUint8(11)) / 100;
       const cycles = (dataView.getUint8(12) << 8) | dataView.getUint8(13);
       
-      // JBD byte 21 provides the direct SOC percentage!
-      let rawSoc = dataView.byteLength >= 22 ? dataView.getUint8(21) : 0;
-      if (rawSoc === 0 && nominalAH > 0) {
-        rawSoc = Number(((remainingAH / nominalAH) * 100).toFixed(1));
+      // JBD byte 23 (offset 19 in payload) provides actual direct SOC percentage (0-100%)
+      let rawSoc = 0;
+      if (dataView.byteLength >= 24) {
+        rawSoc = dataView.getUint8(23);
+      } else if (dataView.byteLength >= 22) {
+        rawSoc = dataView.getUint8(21);
       }
 
-      // Temperature sensor (Kelvin in 0.1K, offset 2731)
+      // Safeguard: if rawSoc is invalid (>100 or 0 while having remainingAH), calculate accurately from remainingAH/nominalAH
+      if ((rawSoc > 100 || rawSoc === 0) && nominalAH > 0 && remainingAH > 0) {
+        rawSoc = Math.min(100, Math.max(0, Math.round((remainingAH / nominalAH) * 100)));
+      }
+
+      // Temperature sensor (NTC 1 at bytes 26-27 in 0.1K)
       let tempC = 25.0;
-      if (dataView.byteLength >= 26) {
-        const rawK = (dataView.getUint8(24) << 8) | dataView.getUint8(25);
+      if (dataView.byteLength >= 28) {
+        const rawK = (dataView.getUint8(26) << 8) | dataView.getUint8(27);
         if (rawK > 0) {
           tempC = Number(((rawK - 2731) / 10).toFixed(1));
         }
@@ -558,15 +570,11 @@ export function useBMS() {
   // 6. STANDARD BATTERY SERVICE PARSER
   const parseStandardBattery = useCallback((socLevel: number) => {
     addHexLog('RX', `0x${socLevel.toString(16).padStart(2, '0')}`, `Standard Battery Level -> ${socLevel}%`);
-    setBmsData(prev => {
-      const simulatedV = prev.minVoltage + ((socLevel / 100) * (prev.maxVoltage - prev.minVoltage));
-      return {
-        ...prev,
-        capacityPercent: socLevel,
-        voltage: Number(simulatedV.toFixed(2)),
-        detectedProtocol: 'Standard Battery'
-      };
-    });
+    setBmsData(prev => ({
+      ...prev,
+      capacityPercent: socLevel,
+      detectedProtocol: 'Standard Battery'
+    }));
   }, [addHexLog]);
 
   // --- STREAM REASSEMBLY ENGINE ---
@@ -974,9 +982,11 @@ export function useBMS() {
     deviceRef.current = null;
     gattServerRef.current = null;
     rxBufferRef.current = [];
+    smootherRef.current.reset();
 
     setIsConnected(false);
     setDeviceName(null);
+    setBmsData(INITIAL_DATA);
     addHexLog('SYS', 'DISCONNECTED', 'Session closed cleanly.');
   }, [addHexLog]);
 
