@@ -48,5 +48,7 @@ export interface BMSData {
   rawHexLogs: BLEHexLog[];
   autoPollEnabled: boolean;
   pollingIntervalMs: number;
+  totalPacketsReceived?: number;
+  lastPacketTime?: string;
 }
 

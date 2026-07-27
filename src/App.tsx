@@ -227,7 +227,11 @@ const BLEDebuggerConsole = ({
   detectedProtocol,
   serviceUUID,
   notifyCharUUID,
-  writeCharUUID
+  writeCharUUID,
+  onSetProtocol,
+  onTriggerPoll,
+  totalPackets,
+  lastPacketTime
 }: {
   rawLogs: BLEHexLog[];
   onSendHex: (hex: string) => void;
@@ -240,6 +244,10 @@ const BLEDebuggerConsole = ({
   serviceUUID?: string;
   notifyCharUUID?: string;
   writeCharUUID?: string;
+  onSetProtocol: (proto: any) => void;
+  onTriggerPoll: () => void;
+  totalPackets?: number;
+  lastPacketTime?: string;
 }) => {
   const [customHexInput, setCustomHexInput] = useState('A5 40 90 08 00 00 00 00 00 00 00 00 75');
   const logContainerRef = useRef<HTMLDivElement>(null);
@@ -266,6 +274,14 @@ const BLEDebuggerConsole = ({
         </div>
         <div className="flex items-center gap-2">
           <button
+            onClick={onTriggerPoll}
+            className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-full text-[10px] font-bold flex items-center gap-1 transition-colors"
+            title="Poll BMS Now"
+          >
+            <RefreshCw size={12} />
+            Poll Now
+          </button>
+          <button
             onClick={onToggleAutoPoll}
             className={`px-2.5 py-1 rounded-full text-[10px] font-mono font-bold flex items-center gap-1 transition-colors ${autoPollEnabled ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-slate-800 text-slate-400'}`}
           >
@@ -282,7 +298,7 @@ const BLEDebuggerConsole = ({
         </div>
       </div>
 
-      {/* Connected GATT Info Badge */}
+      {/* Connected GATT Info & Packet Metrics Badge */}
       <div className="bg-slate-800/80 rounded-2xl p-3 border border-slate-700/60 text-xs font-mono space-y-1">
         <div className="flex justify-between items-center text-slate-300">
           <span className="text-slate-400">BLE Status:</span>
@@ -291,12 +307,14 @@ const BLEDebuggerConsole = ({
             {isConnected ? 'GATT Connected' : 'Disconnected'}
           </span>
         </div>
-        {detectedProtocol && (
-          <div className="flex justify-between items-center text-slate-300">
-            <span className="text-slate-400">Protocol:</span>
-            <span className="text-cyan-400 font-bold">{detectedProtocol}</span>
-          </div>
-        )}
+        <div className="flex justify-between items-center text-slate-300">
+          <span className="text-slate-400">Protocol Mode:</span>
+          <span className="text-cyan-400 font-bold">{detectedProtocol || 'Auto-Detecting...'}</span>
+        </div>
+        <div className="flex justify-between items-center text-slate-300">
+          <span className="text-slate-400">Packets Caught:</span>
+          <span className="text-emerald-400 font-bold">{totalPackets || 0} {lastPacketTime ? `(Last: ${lastPacketTime})` : ''}</span>
+        </div>
         {serviceUUID && (
           <div className="flex justify-between items-center text-slate-400 text-[11px] truncate">
             <span>Service UUID:</span>
@@ -309,6 +327,32 @@ const BLEDebuggerConsole = ({
             <span className="text-slate-200 truncate ml-2 font-mono">{notifyCharUUID}</span>
           </div>
         )}
+      </div>
+
+      {/* Manual Protocol Switcher Buttons */}
+      <div className="space-y-1.5">
+        <span className="text-[10px] font-bold tracking-wider text-slate-400 uppercase">Select BMS Protocol Parser:</span>
+        <div className="flex flex-wrap gap-1.5">
+          {['Daly', 'JBD/Xiaoxiang', 'JK BMS', 'ANT BMS', 'ASCII/UART'].map((proto) => (
+            <button
+              key={proto}
+              onClick={() => onSetProtocol(proto as any)}
+              className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all ${
+                detectedProtocol === proto
+                  ? 'bg-blue-600 text-white shadow-sm'
+                  : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+              }`}
+            >
+              {proto}
+            </button>
+          ))}
+          <button
+            onClick={() => onSetProtocol(undefined)}
+            className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-slate-800 text-slate-400 hover:bg-slate-700"
+          >
+            Auto-Detect
+          </button>
+        </div>
       </div>
 
       {/* Preset Command Quick Poll Buttons */}
@@ -421,7 +465,7 @@ const BLEDebuggerConsole = ({
 export default function App() {
   const { 
     bmsData, connectBluetooth, disconnect, isConnected, isConnecting, error, deviceName,
-    sendHexCommand, simulateIncomingPacket, toggleAutoPoll, clearHexLogs,
+    sendHexCommand, simulateIncomingPacket, setManualProtocol, triggerPollNow, toggleAutoPoll, clearHexLogs,
     toggleAntiTheft, setChargeLimit, setReserveBuffer, setMaxRange, setMinVoltage, setMaxVoltage
   } = useBMS();
 
@@ -524,22 +568,68 @@ export default function App() {
                   </button>
                 </div>
               ) : (
-                <div className="w-full grid grid-cols-2 gap-3">
-                  <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
-                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Pack Voltage</span>
-                    <span className="text-xl font-mono font-black text-gray-900">{bmsData.voltage.toFixed(2)}<span className="text-xs font-normal text-gray-400 ml-0.5">V</span></span>
+                <div className="w-full space-y-3">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+                      <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Pack Voltage</span>
+                      <span className="text-xl font-mono font-black text-gray-900">{bmsData.voltage.toFixed(2)}<span className="text-xs font-normal text-gray-400 ml-0.5">V</span></span>
+                    </div>
+                    <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+                      <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Live Current</span>
+                      <span className="text-xl font-mono font-black text-gray-900">{bmsData.current.toFixed(1)}<span className="text-xs font-normal text-gray-400 ml-0.5">A</span></span>
+                    </div>
+                    <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+                      <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Protocol</span>
+                      <span className="text-xs font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-md inline-block">{bmsData.detectedProtocol || 'Listening...'}</span>
+                    </div>
+                    <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+                      <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Temperature</span>
+                      <span className="text-xl font-mono font-black text-gray-900">{bmsData.temperature.toFixed(1)}<span className="text-xs font-normal text-gray-400 ml-0.5">°C</span></span>
+                    </div>
                   </div>
-                  <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
-                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Live Current</span>
-                    <span className="text-xl font-mono font-black text-gray-900">{bmsData.current.toFixed(1)}<span className="text-xs font-normal text-gray-400 ml-0.5">A</span></span>
-                  </div>
-                  <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
-                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Protocol</span>
-                    <span className="text-xs font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-md inline-block">{bmsData.detectedProtocol || 'Listening...'}</span>
-                  </div>
-                  <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
-                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Temperature</span>
-                    <span className="text-xl font-mono font-black text-gray-900">{bmsData.temperature.toFixed(1)}<span className="text-xs font-normal text-gray-400 ml-0.5">°C</span></span>
+
+                  {/* BMS Protocol Selector & Data Fetch Control */}
+                  <div className="bg-white rounded-3xl p-4 shadow-sm border border-gray-100 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="text-xs font-bold text-gray-900 flex items-center gap-1.5">
+                          <Cpu size={16} className="text-blue-500" />
+                          <span>BMS Data Fixer & Protocol</span>
+                        </div>
+                        <p className="text-[10px] text-gray-400 mt-0.5">
+                          Packets caught: <span className="font-bold text-emerald-600">{bmsData.totalPacketsReceived || 0}</span> {bmsData.lastPacketTime ? `(Last: ${bmsData.lastPacketTime})` : ''}
+                        </p>
+                      </div>
+                      <button
+                        onClick={triggerPollNow}
+                        className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-bold text-xs rounded-xl shadow-sm transition-colors flex items-center gap-1 shrink-0"
+                      >
+                        <RefreshCw size={12} />
+                        Poll Now
+                      </button>
+                    </div>
+
+                    <div className="flex flex-wrap gap-1.5 pt-1">
+                      {['Daly', 'JBD/Xiaoxiang', 'JK BMS', 'ANT BMS', 'ASCII/UART'].map((proto) => (
+                        <button
+                          key={proto}
+                          onClick={() => setManualProtocol(proto as any)}
+                          className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-colors ${
+                            bmsData.detectedProtocol === proto
+                              ? 'bg-blue-600 text-white'
+                              : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                          }`}
+                        >
+                          {proto}
+                        </button>
+                      ))}
+                      <button
+                        onClick={() => setManualProtocol(undefined)}
+                        className="px-2.5 py-1 rounded-lg text-[10px] font-bold bg-gray-100 text-gray-500 hover:bg-gray-200"
+                      >
+                        Auto-Detect
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}
@@ -666,6 +756,10 @@ export default function App() {
                 serviceUUID={bmsData.serviceUUID}
                 notifyCharUUID={bmsData.notifyCharUUID}
                 writeCharUUID={bmsData.writeCharUUID}
+                onSetProtocol={setManualProtocol}
+                onTriggerPoll={triggerPollNow}
+                totalPackets={bmsData.totalPacketsReceived}
+                lastPacketTime={bmsData.lastPacketTime}
               />
 
             </motion.div>
