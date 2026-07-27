@@ -103,11 +103,21 @@ export const BMS_PRESET_COMMANDS = {
     bytes: [0xDD, 0xA5, 0x04, 0x00, 0xFF, 0xFC, 0x77]
   },
 
-  // JK BMS Commands
+  // JK BMS Commands (Classic NW + JK02/JK04 jkbms.com)
   JK_READ_ALL_INFO: {
-    name: 'JK BMS Read All Telemetry',
+    name: 'JK BMS Read Telemetry (Classic 0x4E 0x57)',
     hex: '4E 57 00 13 00 00 00 00 06 03 00 00 00 00 00 00 68 00 00 01 29',
     bytes: [0x4E, 0x57, 0x00, 0x13, 0x00, 0x00, 0x00, 0x00, 0x06, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x68, 0x00, 0x00, 0x01, 0x29]
+  },
+  JK02_READ_INFO: {
+    name: 'JK02 / JK04 / jkbms.com Read Telemetry',
+    hex: 'AA 55 90 EB 97 00 00 00 00 00 00 00 00 00 00 00 00 00 00 11',
+    bytes: [0xAA, 0x55, 0x90, 0xEB, 0x97, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x11]
+  },
+  JK02_WAKE_INFO: {
+    name: 'JK02 / JK04 Poll Request',
+    hex: '55 AA EB 90 02 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00',
+    bytes: [0x55, 0xAA, 0xEB, 0x90, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
   },
 
   // ANT BMS Command
@@ -470,13 +480,11 @@ export function useBMS() {
     }
   }, [addHexLog]);
 
-  // 3. JK BMS FRAME PARSER (Header 0x4E 0x57 "NW")
+  // 3. JK BMS FRAME PARSER (Header 0x4E 0x57 "NW" or 0xAA 0x55 / 0x55 0xAA for JK02/JK04 jkbms.com)
   const parseJkFrame = useCallback((dataView: DataView) => {
     const rawHex = dataViewToHexString(dataView);
     addHexLog('RX', rawHex, 'JK BMS Telemetry Frame Received');
 
-    // Parse TLV fields inside JK BMS payload
-    let offset = 10; // TLV start after header + CMD
     let parsedV = 0;
     let parsedI = 0;
     let parsedSoc = 0;
@@ -484,7 +492,13 @@ export function useBMS() {
     let parsedCycles = 0;
     const parsedCells: CellData[] = [];
 
-    while (offset < dataView.byteLength - 4) {
+    // Header inspection
+    const h0 = dataView.byteLength >= 1 ? dataView.getUint8(0) : 0;
+    const h1 = dataView.byteLength >= 2 ? dataView.getUint8(1) : 0;
+
+    let offset = (h0 === 0x4E && h1 === 0x57) ? 10 : 2;
+
+    while (offset < dataView.byteLength - 2) {
       const tag = dataView.getUint8(offset);
       offset++;
 
@@ -542,7 +556,28 @@ export function useBMS() {
           offset += 4;
         }
       } else {
-        offset += 2; // Default advance
+        offset += 1; // Default 1-byte advance for flexible TLV search
+      }
+    }
+
+    // Positional fallback decoding for JK02 / JK04 jkbms.com frames if TLV tag 0x83 was missing
+    if (parsedV === 0 && dataView.byteLength >= 10) {
+      const posV = ((dataView.getUint8(4) << 8) | dataView.getUint8(5)) / 100;
+      if (posV >= 10 && posV <= 150) {
+        parsedV = posV;
+      }
+      if (dataView.byteLength >= 8) {
+        const rawI = (dataView.getUint8(6) << 8) | dataView.getUint8(7);
+        const posI = (rawI > 32767 ? rawI - 65536 : rawI) / 100;
+        if (Math.abs(posI) < 500) {
+          parsedI = posI;
+        }
+      }
+      if (parsedSoc === 0 && dataView.byteLength >= 9) {
+        const posSoc = dataView.getUint8(8);
+        if (posSoc > 0 && posSoc <= 100) {
+          parsedSoc = posSoc;
+        }
       }
     }
 
@@ -686,11 +721,18 @@ export function useBMS() {
         }
       }
 
-      // C) JK BMS (Header 0x4E 0x57 "NW")
+      // C) JK BMS (Headers: 0x4E 0x57 "NW", or 0xAA 0x55 / 0x55 0xAA for JK02/JK04 jkbms.com)
       let jkIdx = -1;
+      let jkHeaderType = 0; // 1 for 4E57, 2 for AA55/55AA
       for (let i = 0; i < buffer.length - 1; i++) {
         if (buffer[i] === 0x4E && buffer[i + 1] === 0x57) {
           jkIdx = i;
+          jkHeaderType = 1;
+          break;
+        }
+        if ((buffer[i] === 0xAA && buffer[i + 1] === 0x55) || (buffer[i] === 0x55 && buffer[i + 1] === 0xAA)) {
+          jkIdx = i;
+          jkHeaderType = 2;
           break;
         }
       }
@@ -699,21 +741,36 @@ export function useBMS() {
           buffer = buffer.slice(jkIdx);
           rxBufferRef.current = buffer;
         }
-        if (buffer.length >= 4) {
-          const rawLen = (buffer[2] << 8) | buffer[3];
-          const expectedLen = (rawLen >= 10 && rawLen <= 400) ? rawLen : 273;
-          if (buffer.length >= expectedLen) {
-            const frame = buffer.slice(0, expectedLen);
+
+        if (jkHeaderType === 1) {
+          if (buffer.length >= 4) {
+            const rawLen = (buffer[2] << 8) | buffer[3];
+            const expectedLen = (rawLen >= 10 && rawLen <= 400) ? rawLen : 273;
+            if (buffer.length >= expectedLen) {
+              const frame = buffer.slice(0, expectedLen);
+              const dataView = new DataView(new Uint8Array(frame).buffer);
+              parseJkFrame(dataView);
+              buffer = buffer.slice(expectedLen);
+              rxBufferRef.current = buffer;
+              continue;
+            } else {
+              break; // Wait for remaining BLE packets to complete JK frame
+            }
+          } else {
+            break;
+          }
+        } else if (jkHeaderType === 2) { // AA 55 or 55 AA frame (JK02/JK04/jkbms.com)
+          if (buffer.length >= 16) {
+            const frameLen = Math.min(buffer.length, 300);
+            const frame = buffer.slice(0, frameLen);
             const dataView = new DataView(new Uint8Array(frame).buffer);
             parseJkFrame(dataView);
-            buffer = buffer.slice(expectedLen);
+            buffer = buffer.slice(frameLen);
             rxBufferRef.current = buffer;
             continue;
           } else {
-            break; // Wait for remaining BLE packets to complete JK frame
+            break;
           }
-        } else {
-          break;
         }
       }
 
@@ -813,7 +870,13 @@ export function useBMS() {
       const char = writeCharRef.current;
       addHexLog('TX', hexDisplay, `Sent to ${char.uuid.substring(0, 8)}...`);
 
-      if (char.properties.writeWithoutResponse) {
+      if (char.properties.writeWithoutResponse && char.properties.write) {
+        try {
+          await char.writeValueWithoutResponse(payload);
+        } catch {
+          await char.writeValue(payload);
+        }
+      } else if (char.properties.writeWithoutResponse) {
         await char.writeValueWithoutResponse(payload);
       } else if (char.properties.write) {
         await char.writeValue(payload);
@@ -843,15 +906,20 @@ export function useBMS() {
       setTimeout(() => sendHexCommand(BMS_PRESET_COMMANDS.JBD_READ_CELL_VOLTAGES.bytes), 300);
     } else if (bmsData.detectedProtocol === 'JK BMS') {
       sendHexCommand(BMS_PRESET_COMMANDS.JK_READ_ALL_INFO.bytes);
+      setTimeout(() => sendHexCommand(BMS_PRESET_COMMANDS.JK02_READ_INFO.bytes), 150);
+      setTimeout(() => sendHexCommand(BMS_PRESET_COMMANDS.JK02_WAKE_INFO.bytes), 300);
     } else if (bmsData.detectedProtocol === 'ANT BMS') {
       sendHexCommand(BMS_PRESET_COMMANDS.ANT_READ_TELEMETRY.bytes);
     } else {
       // 2. UNKNOWN / AUTO-PROBING PROTOCOL: Send queries for JK BMS, Daly, JBD, and ANT sequentially
-      addHexLog('SYS', 'AUTO_PROBE', 'Probing all BMS protocols (JK -> Daly -> JBD -> ANT)...');
+      addHexLog('SYS', 'AUTO_PROBE', 'Probing all BMS protocols (JK Classic & JK02 -> Daly -> JBD -> ANT)...');
       sendHexCommand(BMS_PRESET_COMMANDS.JK_READ_ALL_INFO.bytes);
       setTimeout(() => {
+        sendHexCommand(BMS_PRESET_COMMANDS.JK02_READ_INFO.bytes);
+      }, 150);
+      setTimeout(() => {
         sendHexCommand(BMS_PRESET_COMMANDS.DALY_READ_SOC_VOLTS.bytes);
-      }, 250);
+      }, 300);
       setTimeout(() => {
         sendHexCommand(BMS_PRESET_COMMANDS.JBD_READ_BASIC_INFO.bytes);
       }, 500);
@@ -955,8 +1023,10 @@ export function useBMS() {
             if ((props.notify || props.indicate) && !notifyInService) {
               notifyInService = char;
             }
-            if ((props.write || props.writeWithoutResponse) && !writeInService) {
-              writeInService = char;
+            if (props.write || props.writeWithoutResponse) {
+              if (!writeInService || (writeInService === notifyInService && char !== notifyInService)) {
+                writeInService = char;
+              }
             }
           }
 
