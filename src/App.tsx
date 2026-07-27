@@ -404,18 +404,45 @@ export default function App() {
           {activeTab === 'diagnostics' && (
             <motion.div initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} className="space-y-4">
               
+              {/* Temperature Card */}
               <div className="bg-white rounded-3xl p-6 shadow-[0_8px_30px_rgba(0,0,0,0.04)] flex items-center justify-between">
                 <div className="flex items-center gap-4">
                   <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${bmsData.temperature > 40 ? 'bg-red-50 text-red-500' : 'bg-blue-50 text-blue-500'}`}>
                     <Thermometer size={24} />
                   </div>
                   <div>
-                    <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider">Temperature</h3>
-                    <p className="text-2xl font-extrabold text-gray-900">{bmsData.temperature.toFixed(1)}°C</p>
+                    <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider">Battery Temperature</h3>
+                    <p className="text-2xl font-extrabold text-gray-900">
+                      {isConnected ? `${bmsData.temperature.toFixed(1)}°C` : '0.0°C'}
+                    </p>
                   </div>
                 </div>
                 <div className={`px-3 py-1 rounded-full text-xs font-bold ${bmsData.thermalState === 'Normal' ? 'bg-green-50 text-green-600' : 'bg-orange-50 text-orange-600'}`}>
-                  {bmsData.thermalState}
+                  {isConnected ? bmsData.thermalState : 'Disconnected'}
+                </div>
+              </div>
+
+              {/* Charge Cycles Completed (BMS Telemetry Data) */}
+              <div className="bg-white rounded-3xl p-6 shadow-[0_8px_30px_rgba(0,0,0,0.04)] flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                    <RefreshCw size={24} />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider">Battery Charge Cycles</h3>
+                    <div className="flex items-baseline gap-2 mt-0.5">
+                      <span className="text-2xl font-extrabold text-gray-900">{isConnected ? bmsData.cycleCount : 0}</span>
+                      <span className="text-xs font-bold text-gray-500">Completed Cycles</span>
+                    </div>
+                    <p className="text-[11px] text-gray-400 mt-0.5">
+                      Gaadi abhi tak kitni baar charge cycle complete ki (BMS Hardware Read)
+                    </p>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <span className="bg-emerald-50 text-emerald-700 text-[10px] font-extrabold uppercase px-2.5 py-1 rounded-full border border-emerald-100">
+                    {isConnected ? (bmsData.detectedProtocol || 'BMS Telemetry') : 'Offline'}
+                  </span>
                 </div>
               </div>
 

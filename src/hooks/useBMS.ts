@@ -48,12 +48,18 @@ const ALL_OPTIONAL_SERVICES = [
   BMS_UUIDS.JK.SERVICE,
   BMS_UUIDS.NUS.SERVICE,
   BMS_UUIDS.ANT.SERVICE,
+  '0000ffe0-0000-1000-8000-00805f9b34fb',
   '0000ffe1-0000-1000-8000-00805f9b34fb',
   '0000ffe5-0000-1000-8000-00805f9b34fb',
+  '0000e7e0-0000-1000-8000-00805f9b34fb',
+  '0000e7e1-0000-1000-8000-00805f9b34fb',
+  '0000ff00-0000-1000-8000-00805f9b34fb',
+  '6e400001-b5a3-f393-e0a9-e50e24dcca9e',
   '00001000-0000-1000-8000-00805f9b34fb',
   '0000a002-0000-1000-8000-00805f9b34fb',
   '00000001-0000-1000-8000-00805f9b34fb',
-  '0000f00d-0000-1000-8000-00805f9b34fb'
+  '0000f00d-0000-1000-8000-00805f9b34fb',
+  '0000180f-0000-1000-8000-00805f9b34fb'
 ];
 
 // Preset Hex Commands
@@ -389,19 +395,24 @@ export function useBMS() {
         rawSoc = Math.min(100, Math.max(0, Math.round((remainingAH / nominalAH) * 100)));
       }
 
-      // Temperature sensor (NTC 1 at bytes 26-27 in 0.1K)
-      let tempC = 25.0;
-      if (dataView.byteLength >= 28) {
+      // Temperature sensor (NTC 1 in 0.1K, offset 23 in payload / byte 27-28 in frame)
+      let parsedTempC: number | null = null;
+      if (dataView.byteLength >= 29) {
+        const rawK = (dataView.getUint8(27) << 8) | dataView.getUint8(28);
+        if (rawK > 0) {
+          parsedTempC = Number(((rawK - 2731) / 10).toFixed(1));
+        }
+      } else if (dataView.byteLength >= 28) {
         const rawK = (dataView.getUint8(26) << 8) | dataView.getUint8(27);
         if (rawK > 0) {
-          tempC = Number(((rawK - 2731) / 10).toFixed(1));
+          parsedTempC = Number(((rawK - 2731) / 10).toFixed(1));
         }
       }
 
       // Balance status bitmask at offset 16-17
       const balanceMask = (dataView.getUint8(16) << 8) | dataView.getUint8(17);
 
-      addHexLog('RX', rawHex, `JBD Basic Info -> Volts: ${rawVolts}V, Curr: ${rawCurr}A, SOC: ${rawSoc}%, Rem: ${remainingAH}Ah, Temp: ${tempC}°C, Cycles: ${cycles}`);
+      addHexLog('RX', rawHex, `JBD Basic Info -> Volts: ${rawVolts}V, Curr: ${rawCurr}A, SOC: ${rawSoc}%, Rem: ${remainingAH}Ah, Temp: ${parsedTempC !== null ? parsedTempC + '°C' : 'N/A'}, Cycles: ${cycles}`);
 
       setBmsData(prev => {
         const smoothedV = Number(smootherRef.current.getSmoothedVoltage(rawVolts).toFixed(2));
@@ -418,6 +429,8 @@ export function useBMS() {
           isBalancing: Boolean(balanceMask & (1 << idx))
         }));
 
+        const finalTemp = parsedTempC !== null ? parsedTempC : prev.temperature;
+
         return {
           ...prev,
           voltage: smoothedV,
@@ -426,7 +439,8 @@ export function useBMS() {
           remainingCapacityAH: remainingAH,
           nominalCapacityAH: nominalAH > 0 ? nominalAH : prev.nominalCapacityAH,
           cycleCount: cycles,
-          temperature: tempC,
+          temperature: finalTemp,
+          thermalState: finalTemp > 55 ? 'Critical' : finalTemp > 42 ? 'Throttled' : 'Normal',
           power,
           status: currentStatus,
           estimatedRangeKM: Number(estRange.toFixed(1)),
@@ -462,11 +476,12 @@ export function useBMS() {
     addHexLog('RX', rawHex, 'JK BMS Telemetry Frame Received');
 
     // Parse TLV fields inside JK BMS payload
-    let offset = 10; // TLV start
+    let offset = 10; // TLV start after header + CMD
     let parsedV = 0;
     let parsedI = 0;
     let parsedSoc = 0;
     let parsedTemp = 0;
+    let parsedCycles = 0;
     const parsedCells: CellData[] = [];
 
     while (offset < dataView.byteLength - 4) {
@@ -474,42 +489,83 @@ export function useBMS() {
       offset++;
 
       if (tag === 0x79) { // Cell voltages list
-        const len = dataView.getUint8(offset);
-        offset++;
-        const cellCount = len / 3;
-        for (let i = 0; i < cellCount && (offset + 2) < dataView.byteLength; i++) {
-          const cellV = ((dataView.getUint8(offset + 1) << 8) | dataView.getUint8(offset + 2)) / 1000;
-          parsedCells.push({ id: i + 1, voltage: cellV, isBalancing: false, healthStatus: cellV < 2.9 || cellV > 4.25 ? 'Warning' : 'Good' });
-          offset += 3;
+        if (offset < dataView.byteLength) {
+          const len = dataView.getUint8(offset);
+          offset++;
+          const cellCount = Math.floor(len / 3);
+          for (let i = 0; i < cellCount && (offset + 2) < dataView.byteLength; i++) {
+            const cellV = ((dataView.getUint8(offset + 1) << 8) | dataView.getUint8(offset + 2)) / 1000;
+            if (cellV > 0 && cellV < 5.0) {
+              parsedCells.push({
+                id: i + 1,
+                voltage: cellV,
+                isBalancing: false,
+                healthStatus: cellV < 2.9 || cellV > 4.25 ? 'Warning' : 'Good'
+              });
+            }
+            offset += 3;
+          }
         }
-      } else if (tag === 0x83) { // Total Pack Voltage
-        parsedV = ((dataView.getUint8(offset) << 8) | dataView.getUint8(offset + 1)) / 100;
-        offset += 2;
-      } else if (tag === 0x84) { // Current
-        const rawI = (dataView.getUint8(offset) << 8) | dataView.getUint8(offset + 1);
-        parsedI = (rawI > 32767 ? rawI - 65536 : rawI) / 100;
-        offset += 2;
+      } else if (tag === 0x80 || tag === 0x81 || tag === 0x82) { // Temperatures
+        if (offset + 1 < dataView.byteLength) {
+          const rawT = (dataView.getUint8(offset) << 8) | dataView.getUint8(offset + 1);
+          const tempVal = rawT > 32767 ? rawT - 65536 : rawT;
+          if (tempVal > -40 && tempVal < 120) {
+            parsedTemp = tempVal;
+          }
+          offset += 2;
+        }
+      } else if (tag === 0x83) { // Total Pack Voltage (0.01V)
+        if (offset + 1 < dataView.byteLength) {
+          parsedV = ((dataView.getUint8(offset) << 8) | dataView.getUint8(offset + 1)) / 100;
+          offset += 2;
+        }
+      } else if (tag === 0x84) { // Current (0.01A)
+        if (offset + 1 < dataView.byteLength) {
+          const rawI = (dataView.getUint8(offset) << 8) | dataView.getUint8(offset + 1);
+          parsedI = (rawI > 32767 ? rawI - 65536 : rawI) / 100;
+          offset += 2;
+        }
       } else if (tag === 0x85) { // SOC %
-        parsedSoc = dataView.getUint8(offset);
-        offset += 1;
-      } else if (tag === 0x80 || tag === 0x81) { // Temperatures
-        const rawT = (dataView.getUint8(offset) << 8) | dataView.getUint8(offset + 1);
-        parsedTemp = rawT > 32767 ? rawT - 65536 : rawT;
-        offset += 2;
+        if (offset < dataView.byteLength) {
+          parsedSoc = dataView.getUint8(offset);
+          offset += 1;
+        }
+      } else if (tag === 0x87) { // Cycle count (2 bytes)
+        if (offset + 1 < dataView.byteLength) {
+          parsedCycles = (dataView.getUint8(offset) << 8) | dataView.getUint8(offset + 1);
+          offset += 2;
+        }
+      } else if (tag === 0x8A || tag === 0x8B) { // Total cycle count (4 bytes)
+        if (offset + 3 < dataView.byteLength) {
+          parsedCycles = (dataView.getUint8(offset) << 24) | (dataView.getUint8(offset + 1) << 16) | (dataView.getUint8(offset + 2) << 8) | dataView.getUint8(offset + 3);
+          offset += 4;
+        }
       } else {
-        offset += 2; // Advance default field
+        offset += 2; // Default advance
       }
     }
 
-    setBmsData(prev => ({
-      ...prev,
-      voltage: parsedV > 0 ? Number(smootherRef.current.getSmoothedVoltage(parsedV).toFixed(2)) : prev.voltage,
-      current: parsedI !== 0 ? parsedI : prev.current,
-      capacityPercent: parsedSoc > 0 ? parsedSoc : prev.capacityPercent,
-      temperature: parsedTemp !== 0 ? parsedTemp : prev.temperature,
-      cells: parsedCells.length > 0 ? parsedCells : prev.cells,
-      detectedProtocol: 'JK BMS'
-    }));
+    setBmsData(prev => {
+      const smoothedV = parsedV > 0 ? Number(smootherRef.current.getSmoothedVoltage(parsedV).toFixed(2)) : prev.voltage;
+      const power = Number((smoothedV * parsedI).toFixed(1));
+      let currentStatus: BMSData['status'] = 'Normal';
+      if (parsedI > 0.5) currentStatus = 'Charging';
+      else if (parsedI < -0.5) currentStatus = 'Discharging';
+
+      return {
+        ...prev,
+        voltage: smoothedV,
+        current: parsedI,
+        capacityPercent: parsedSoc > 0 && parsedSoc <= 100 ? parsedSoc : prev.capacityPercent,
+        temperature: parsedTemp !== 0 ? parsedTemp : prev.temperature,
+        cycleCount: parsedCycles > 0 ? parsedCycles : prev.cycleCount,
+        cells: parsedCells.length > 0 ? parsedCells : prev.cells,
+        power,
+        status: currentStatus,
+        detectedProtocol: 'JK BMS'
+      };
+    });
   }, [addHexLog]);
 
   // 4. ANT BMS FRAME PARSER (Header 0xDB 0xDB or 0x7A 0x7A)
@@ -643,12 +699,19 @@ export function useBMS() {
           buffer = buffer.slice(jkIdx);
           rxBufferRef.current = buffer;
         }
-        if (buffer.length >= 20) {
-          const dataView = new DataView(new Uint8Array(buffer).buffer);
-          parseJkFrame(dataView);
-          buffer = [];
-          rxBufferRef.current = buffer;
-          break;
+        if (buffer.length >= 4) {
+          const rawLen = (buffer[2] << 8) | buffer[3];
+          const expectedLen = (rawLen >= 10 && rawLen <= 400) ? rawLen : 273;
+          if (buffer.length >= expectedLen) {
+            const frame = buffer.slice(0, expectedLen);
+            const dataView = new DataView(new Uint8Array(frame).buffer);
+            parseJkFrame(dataView);
+            buffer = buffer.slice(expectedLen);
+            rxBufferRef.current = buffer;
+            continue;
+          } else {
+            break; // Wait for remaining BLE packets to complete JK frame
+          }
         } else {
           break;
         }
@@ -783,15 +846,18 @@ export function useBMS() {
     } else if (bmsData.detectedProtocol === 'ANT BMS') {
       sendHexCommand(BMS_PRESET_COMMANDS.ANT_READ_TELEMETRY.bytes);
     } else {
-      // 2. UNKNOWN PROTOCOL: AUTO-PROBE by sending query commands for Daly, JBD, and JK sequentially
-      addHexLog('SYS', 'AUTO_PROBE', 'Probing BMS protocol (Daly -> JBD -> JK)...');
-      sendHexCommand(BMS_PRESET_COMMANDS.DALY_READ_SOC_VOLTS.bytes);
+      // 2. UNKNOWN / AUTO-PROBING PROTOCOL: Send queries for JK BMS, Daly, JBD, and ANT sequentially
+      addHexLog('SYS', 'AUTO_PROBE', 'Probing all BMS protocols (JK -> Daly -> JBD -> ANT)...');
+      sendHexCommand(BMS_PRESET_COMMANDS.JK_READ_ALL_INFO.bytes);
+      setTimeout(() => {
+        sendHexCommand(BMS_PRESET_COMMANDS.DALY_READ_SOC_VOLTS.bytes);
+      }, 250);
       setTimeout(() => {
         sendHexCommand(BMS_PRESET_COMMANDS.JBD_READ_BASIC_INFO.bytes);
-      }, 350);
+      }, 500);
       setTimeout(() => {
-        sendHexCommand(BMS_PRESET_COMMANDS.JK_READ_ALL_INFO.bytes);
-      }, 700);
+        sendHexCommand(BMS_PRESET_COMMANDS.ANT_READ_TELEMETRY.bytes);
+      }, 750);
     }
   }, [bmsData.detectedProtocol, sendHexCommand, addHexLog]);
 
@@ -831,6 +897,22 @@ export function useBMS() {
       deviceRef.current = device;
       setDeviceName(device.name || 'BMS BLE Device');
       addHexLog('SYS', 'PAIRING', `Selected Device: ${device.name || 'Unnamed BMS'} [${device.id}]`);
+
+      // Device Name Auto-Protocol Detection (Okinawa / Yukinava / JK / Daly / JBD / ANT)
+      const nameUpper = (device.name || '').toUpperCase();
+      if (nameUpper.includes('JK') || nameUpper.includes('NW') || nameUpper.includes('YUKINAVA') || nameUpper.includes('OKINAWA')) {
+        setBmsData(prev => ({ ...prev, detectedProtocol: 'JK BMS' }));
+        addHexLog('SYS', 'AUTO_DETECT', 'Auto-detected protocol from device name: JK BMS');
+      } else if (nameUpper.includes('XIAOXIANG') || nameUpper.includes('JBD')) {
+        setBmsData(prev => ({ ...prev, detectedProtocol: 'JBD/Xiaoxiang' }));
+        addHexLog('SYS', 'AUTO_DETECT', 'Auto-detected protocol from device name: JBD/Xiaoxiang');
+      } else if (nameUpper.includes('DALY') || nameUpper.includes('DL-')) {
+        setBmsData(prev => ({ ...prev, detectedProtocol: 'Daly' }));
+        addHexLog('SYS', 'AUTO_DETECT', 'Auto-detected protocol from device name: Daly');
+      } else if (nameUpper.includes('ANT')) {
+        setBmsData(prev => ({ ...prev, detectedProtocol: 'ANT BMS' }));
+        addHexLog('SYS', 'AUTO_DETECT', 'Auto-detected protocol from device name: ANT BMS');
+      }
 
       // Disconnect event handler
       device.addEventListener('gattserverdisconnected', () => {
@@ -929,13 +1011,12 @@ export function useBMS() {
         writeCharUUID: selectedWriteChar?.uuid
       }));
 
-      // 6. Trigger immediate protocol probe cycle
+      // 6. Trigger immediate protocol probe & poll cycle
       if (selectedWriteChar) {
-        addHexLog('SYS', 'PROBING', 'Sending initial auto-probe commands...');
-        sendHexCommand(BMS_PRESET_COMMANDS.DALY_READ_SOC_VOLTS.bytes);
+        addHexLog('SYS', 'PROBING', 'Initiating BMS protocol auto-probing sequence...');
         setTimeout(() => {
-          sendHexCommand(BMS_PRESET_COMMANDS.JBD_READ_BASIC_INFO.bytes);
-        }, 300);
+          probeAndPollCycle();
+        }, 200);
       }
 
     } catch (err: any) {
