@@ -52,6 +52,7 @@ export interface BMSData {
   notifyCharUUID?: string;
   writeCharUUID?: string;
   detectedProtocol?: 'Daly' | 'JBD/Xiaoxiang' | 'JK BMS' | 'ANT BMS' | 'Nordic UART' | 'Standard Battery' | 'Unknown';
+  connectionType?: 'BLE';
   rawHexLogs: BLEHexLog[];
   autoPollEnabled: boolean;
   pollingIntervalMs: number;

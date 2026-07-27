@@ -259,20 +259,34 @@ export default function App() {
   const [deepSleep, setDeepSleep] = useState(false);
   const [showTerminal, setShowTerminal] = useState(false);
 
+  const openStandaloneTab = () => {
+    window.open(window.location.href, '_blank');
+  };
+
   return (
     <div className="min-h-screen bg-[#F8F9FA] text-[#333333] font-sans selection:bg-blue-100 flex justify-center">
       {/* Mobile Constraint Container */}
       <div className="w-full max-w-md bg-[#F8F9FA] min-h-screen relative shadow-2xl overflow-hidden flex flex-col">
         
         {/* Header */}
-        <header className="px-6 pt-6 pb-2 flex items-center justify-between z-10 bg-[#F8F9FA]/80 backdrop-blur-md sticky top-0">
+        <header className="px-5 pt-5 pb-2 flex items-center justify-between z-10 bg-[#F8F9FA]/80 backdrop-blur-md sticky top-0 border-b border-gray-100">
           <div>
-            <h1 className="text-lg font-black tracking-tight text-gray-900">E-Scooter BMS</h1>
+            <h1 className="text-base font-black tracking-tight text-gray-900 flex items-center gap-1.5">
+              <span>E-Scooter BMS</span>
+              <span className="text-[10px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-bold">JK & Okinawa</span>
+            </h1>
             <p className="text-[11px] font-medium text-gray-400">
-              {isConnected ? `Connected: ${deviceName || 'BMS Device'}` : 'BLE Disconnected'}
+              {isConnected ? `Connected: ${deviceName || 'BMS Device'} (${bmsData.connectionType || 'BLE'})` : 'BLE / Serial Disconnected'}
             </p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex items-center gap-1.5">
+            <button 
+              onClick={openStandaloneTab}
+              title="Open in New Tab for full Web Bluetooth modal permissions"
+              className="p-2 rounded-full bg-white text-gray-600 border border-gray-200 hover:bg-gray-50 shadow-xs text-xs font-bold"
+            >
+              <Zap size={14} className="text-amber-500" />
+            </button>
             <button 
               onClick={isConnected ? disconnect : connectBluetooth}
               disabled={isConnecting}
@@ -281,12 +295,12 @@ export default function App() {
                   ? 'bg-blue-50 text-blue-600 border border-blue-100 hover:bg-blue-100' 
                   : isConnecting
                   ? 'bg-amber-50 text-amber-600 border border-amber-100 animate-pulse'
-                  : 'bg-white text-gray-700 border border-gray-200 hover:bg-gray-50'
+                  : 'bg-blue-600 text-white hover:bg-blue-700'
               }`}
             >
               {isConnecting ? (
                 <>
-                  <RefreshCw size={14} className="animate-spin text-amber-500" />
+                  <RefreshCw size={14} className="animate-spin text-white" />
                   <span>Connecting...</span>
                 </>
               ) : isConnected ? (
@@ -296,7 +310,7 @@ export default function App() {
                 </>
               ) : (
                 <>
-                  <BluetoothOff size={14} className="text-gray-400" />
+                  <Bluetooth size={14} className="text-white" />
                   <span>Connect BLE</span>
                 </>
               )}
@@ -306,18 +320,58 @@ export default function App() {
 
         {/* Global Error Banner */}
         {error && (
-          <div className="mx-6 mt-2 p-3 bg-red-50 border border-red-200 rounded-2xl flex items-start gap-2.5 text-xs text-red-700 shadow-sm">
+          <div className="mx-5 mt-2 p-3 bg-red-50 border border-red-200 rounded-2xl flex items-start gap-2.5 text-xs text-red-700 shadow-sm">
             <AlertCircle size={18} className="text-red-500 shrink-0 mt-0.5" />
             <div className="flex-1">
-              <span className="font-bold block">Bluetooth Connection Error</span>
+              <span className="font-bold block">Connection Error</span>
               <span>{error}</span>
             </div>
           </div>
         )}
 
         {/* Scrollable Content Area */}
-        <main className="flex-1 overflow-y-auto px-6 pb-28 pt-2 space-y-4 [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
+        <main className="flex-1 overflow-y-auto px-5 pb-28 pt-2 space-y-4 [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
           
+          {/* JK BMS & Okinawa Connection Assistant Banner */}
+          {!isConnected && (
+            <div className="bg-gradient-to-br from-blue-900 to-indigo-900 text-white rounded-3xl p-5 shadow-lg border border-blue-700 space-y-3">
+              <div className="flex items-center justify-between border-b border-blue-700/60 pb-2.5">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-blue-500/20 flex items-center justify-center text-blue-300">
+                    <Radio size={18} className="animate-pulse" />
+                  </div>
+                  <div>
+                    <h2 className="text-xs font-black uppercase tracking-wider text-blue-200">JK BMS & Okinawa Connect Guide</h2>
+                    <p className="text-[10px] text-blue-300">Fast pairing for Praise, Ridge & JK BMS</p>
+                  </div>
+                </div>
+                <button 
+                  onClick={openStandaloneTab}
+                  className="bg-blue-500 hover:bg-blue-400 text-white text-[10px] font-extrabold px-2.5 py-1 rounded-full flex items-center gap-1 shadow-xs"
+                >
+                  <span>New Tab ↗</span>
+                </button>
+              </div>
+
+              <div className="text-[11px] text-blue-100 leading-relaxed space-y-1.5">
+                <p>
+                  <strong className="text-white">Bluetooth Pairing:</strong> Mobile Chrome ya Desktop Chrome par <strong>Connect BLE</strong> dabayein. Agar browser popup ignore kar raha hai to upar <strong>New Tab ↗</strong> press karein.
+                </p>
+              </div>
+
+              {/* Quick Action Button */}
+              <div className="pt-1">
+                <button
+                  onClick={connectBluetooth}
+                  className="w-full bg-blue-500 hover:bg-blue-400 text-white font-bold text-xs py-2.5 px-3 rounded-2xl flex items-center justify-center gap-1.5 shadow-sm active:scale-98 transition-transform"
+                >
+                  <Bluetooth size={14} />
+                  <span>Connect BLE</span>
+                </button>
+              </div>
+            </div>
+          )}
+
           {activeTab === 'dashboard' && (
             <motion.div initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} className="flex flex-col items-center h-full space-y-4">
               

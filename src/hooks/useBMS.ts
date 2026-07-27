@@ -40,14 +40,19 @@ export const BMS_UUIDS = {
   }
 };
 
-// Comprehensive list of optional service UUIDs for Bluetooth requestDevice
+// Comprehensive list of optional service UUIDs for Bluetooth requestDevice (Includes 16-bit short numbers and 128-bit strings)
 const ALL_OPTIONAL_SERVICES = [
   'battery_service',
-  BMS_UUIDS.DALY.SERVICE,
-  BMS_UUIDS.JBD.SERVICE,
-  BMS_UUIDS.JK.SERVICE,
-  BMS_UUIDS.NUS.SERVICE,
-  BMS_UUIDS.ANT.SERVICE,
+  'device_information',
+  'generic_access',
+  'generic_attribute',
+  // Short 16-bit numbers for Chrome compatibility
+  0xffe0, 0xffe1, 0xffe2, 0xffe3, 0xffe4, 0xffe5,
+  0xff00, 0xff01, 0xff02,
+  0xfee0, 0xfee1,
+  0xe7e0, 0xe7e1, 0xe7e2,
+  0x180f, 0x1800, 0x1801, 0x180a,
+  // 128-bit full UUID strings
   '0000ffe0-0000-1000-8000-00805f9b34fb',
   '0000ffe1-0000-1000-8000-00805f9b34fb',
   '0000ffe2-0000-1000-8000-00805f9b34fb',
@@ -1137,19 +1142,46 @@ export function useBMS() {
     try {
       setIsConnecting(true);
       setError(null);
-      addHexLog('SYS', 'SCANNING', 'Requesting BLE device popup...');
+      addHexLog('SYS', 'SCANNING', 'Opening Bluetooth scanner popup...');
 
-      // 1. Request Bluetooth Device with all known BMS UART services
-      const device = await navigator.bluetooth.requestDevice({
-        acceptAllDevices: true,
-        optionalServices: ALL_OPTIONAL_SERVICES
-      });
+      let device: BluetoothDevice;
+
+      // 1. Dual request strategy: Accept all devices with optional services, or fallback to namePrefix filters
+      try {
+        device = await navigator.bluetooth.requestDevice({
+          acceptAllDevices: true,
+          optionalServices: ALL_OPTIONAL_SERVICES
+        });
+      } catch (firstError: any) {
+        if (firstError.name === 'NotFoundError' || firstError.message?.includes('cancelled')) {
+          throw firstError;
+        }
+        addHexLog('SYS', 'SCAN_FALLBACK', 'AcceptAllDevices fallback: Trying filtered BLE request...');
+        device = await navigator.bluetooth.requestDevice({
+          filters: [
+            { namePrefix: 'JK' },
+            { namePrefix: 'NW' },
+            { namePrefix: 'Okinawa' },
+            { namePrefix: 'Yukinava' },
+            { namePrefix: 'JBD' },
+            { namePrefix: 'Xiaoxiang' },
+            { namePrefix: 'Daly' },
+            { namePrefix: 'ANT' },
+            { namePrefix: 'BMS' },
+            { namePrefix: 'Scooter' },
+            { namePrefix: 'Battery' },
+            { namePrefix: 'EV' },
+            { namePrefix: 'SmartBMS' }
+          ],
+          optionalServices: ALL_OPTIONAL_SERVICES
+        });
+      }
 
       deviceRef.current = device;
       setDeviceName(device.name || 'BMS BLE Device');
       addHexLog('SYS', 'PAIRING', `Selected Device: ${device.name || 'Unnamed BMS'} [${device.id}]`);
 
-      // Device Name Auto-Protocol Detection (Okinawa / Yukinava / JK / Daly / JBD / ANT / E-Bikes)
+      // Device Name Auto-Protocol Detection (Okinawa / Yukinava / JK / Daly / JBD / ANT)
       const nameUpper = (device.name || '').toUpperCase();
       if (
         nameUpper.includes('JK') || 
@@ -1168,17 +1200,19 @@ export function useBMS() {
         nameUpper.includes('SCOOTER') ||
         nameUpper.includes('SMARTBMS')
       ) {
-        setBmsData(prev => ({ ...prev, detectedProtocol: 'JK BMS' }));
+        setBmsData(prev => ({ ...prev, detectedProtocol: 'JK BMS', connectionType: 'BLE' }));
         addHexLog('SYS', 'AUTO_DETECT', 'Auto-detected protocol from device name: JK BMS');
       } else if (nameUpper.includes('XIAOXIANG') || nameUpper.includes('JBD')) {
-        setBmsData(prev => ({ ...prev, detectedProtocol: 'JBD/Xiaoxiang' }));
+        setBmsData(prev => ({ ...prev, detectedProtocol: 'JBD/Xiaoxiang', connectionType: 'BLE' }));
         addHexLog('SYS', 'AUTO_DETECT', 'Auto-detected protocol from device name: JBD/Xiaoxiang');
       } else if (nameUpper.includes('DALY') || nameUpper.includes('DL-')) {
-        setBmsData(prev => ({ ...prev, detectedProtocol: 'Daly' }));
+        setBmsData(prev => ({ ...prev, detectedProtocol: 'Daly', connectionType: 'BLE' }));
         addHexLog('SYS', 'AUTO_DETECT', 'Auto-detected protocol from device name: Daly');
       } else if (nameUpper.includes('ANT')) {
-        setBmsData(prev => ({ ...prev, detectedProtocol: 'ANT BMS' }));
+        setBmsData(prev => ({ ...prev, detectedProtocol: 'ANT BMS', connectionType: 'BLE' }));
         addHexLog('SYS', 'AUTO_DETECT', 'Auto-detected protocol from device name: ANT BMS');
+      } else {
+        setBmsData(prev => ({ ...prev, connectionType: 'BLE' }));
       }
 
       // Disconnect event handler
@@ -1199,52 +1233,45 @@ export function useBMS() {
 
       // 3. Discover Primary Services
       addHexLog('SYS', 'DISCOVERING', 'Discovering GATT primary services...');
-      const services = await server.getPrimaryServices();
-      addHexLog('SYS', 'SERVICES', `Found ${services.length} services on device.`);
+      let services: BluetoothRemoteGATTService[] = [];
+      try {
+        services = await server.getPrimaryServices();
+      } catch (svcErr) {
+        console.warn('getPrimaryServices failed, trying specific service UUIDs:', svcErr);
+        // Fallback: try getting primary service by specific known BMS UUIDs
+        const knownUuids = ['0000ffe0-0000-1000-8000-00805f9b34fb', '0000e7e0-0000-1000-8000-00805f9b34fb', '0000ff00-0000-1000-8000-00805f9b34fb', '6e400001-b5a3-f393-e0a9-e50e24dcca9e', 'battery_service'];
+        for (const uuid of knownUuids) {
+          try {
+            const singleSvc = await server.getPrimaryService(uuid);
+            if (singleSvc) services.push(singleSvc);
+          } catch (e) {
+            // continue
+          }
+        }
+      }
+
+      addHexLog('SYS', 'SERVICES', `Found ${services.length} primary service(s) on device.`);
 
       let selectedNotifyChar: BluetoothRemoteGATTCharacteristic | null = null;
       let selectedWriteChar: BluetoothRemoteGATTCharacteristic | null = null;
       let matchedServiceUUID = '';
 
-      // SMART GATT SERVICE MATCHING ALGORITHM
-      // Find a single service that contains BOTH a Notify/Indicate characteristic AND a Write characteristic
+      // SMART GATT SERVICE MATCHING ALGORITHM across all discovered services
       for (const service of services) {
         const serviceUuid = service.uuid.toLowerCase();
         try {
           const chars = await service.getCharacteristics();
-          let notifyInService: BluetoothRemoteGATTCharacteristic | null = null;
-          let writeInService: BluetoothRemoteGATTCharacteristic | null = null;
-
           for (const char of chars) {
             const props = char.properties;
             addHexLog('SYS', 'CHAR_DISCOVERED', `Service ${serviceUuid.substring(0, 8)}... -> Char ${char.uuid.substring(0, 8)}... (Notify: ${props.notify || props.indicate}, Write: ${props.write || props.writeWithoutResponse})`);
 
-            if ((props.notify || props.indicate) && !notifyInService) {
-              notifyInService = char;
+            if ((props.notify || props.indicate) && !selectedNotifyChar) {
+              selectedNotifyChar = char;
+              matchedServiceUUID = service.uuid;
             }
-            if (props.write || props.writeWithoutResponse) {
-              if (!writeInService || (writeInService === notifyInService && char !== notifyInService)) {
-                writeInService = char;
-              }
+            if ((props.write || props.writeWithoutResponse) && !selectedWriteChar) {
+              selectedWriteChar = char;
             }
-          }
-
-          // If this service has BOTH Notify and Write, it's overwhelmingly the BMS UART service!
-          if (notifyInService && writeInService && !selectedNotifyChar) {
-            selectedNotifyChar = notifyInService;
-            selectedWriteChar = writeInService;
-            matchedServiceUUID = service.uuid;
-            addHexLog('SYS', 'MATCHED_UART_SERVICE', `Found complete UART pair in service: ${serviceUuid}`);
-            break;
-          }
-
-          // Fallback single characteristic capture
-          if (notifyInService && !selectedNotifyChar) {
-            selectedNotifyChar = notifyInService;
-            matchedServiceUUID = service.uuid;
-          }
-          if (writeInService && !selectedWriteChar) {
-            selectedWriteChar = writeInService;
           }
         } catch (e) {
           console.warn(`Could not inspect service ${serviceUuid}:`, e);
@@ -1252,7 +1279,7 @@ export function useBMS() {
       }
 
       if (!selectedNotifyChar) {
-        throw new Error('No characteristic with NOTIFY or INDICATE properties found on device.');
+        throw new Error('No Bluetooth characteristic with NOTIFY or INDICATE found on this device.');
       }
 
       notifyCharRef.current = selectedNotifyChar;
@@ -1277,15 +1304,19 @@ export function useBMS() {
         ...prev,
         serviceUUID: matchedServiceUUID,
         notifyCharUUID: selectedNotifyChar?.uuid,
-        writeCharUUID: selectedWriteChar?.uuid
+        writeCharUUID: selectedWriteChar?.uuid,
+        connectionType: 'BLE'
       }));
 
-      // 6. Trigger immediate protocol probe & poll cycle
+      // 6. Trigger immediate Hardware Wake Pulse & Protocol Probe Cycle
       if (selectedWriteChar) {
-        addHexLog('SYS', 'PROBING', 'Initiating BMS protocol auto-probing sequence...');
+        addHexLog('SYS', 'WAKING', 'Sending JK BMS / Okinawa BLE Hardware Wake Pulse...');
+        // Send wake byte pulse sequence
+        sendHexCommand(BMS_PRESET_COMMANDS.JK_WAKE_PULSE.bytes);
+        
         setTimeout(() => {
           probeAndPollCycle();
-        }, 200);
+        }, 300);
       }
 
     } catch (err: any) {
@@ -1303,19 +1334,25 @@ export function useBMS() {
     }
   };
 
-  // --- DEMO MOCK SIMULATION (For testing in non-BLE environments) ---
-  const simulateIncomingPacket = useCallback((presetKey: keyof typeof BMS_PRESET_COMMANDS) => {
-    addHexLog('SYS', 'SIMULATION', `Triggered mock packet for ${presetKey}`);
+  // --- DEMO MOCK SIMULATION (For testing in non-BLE environments / iframe previews) ---
+  const simulateIncomingPacket = useCallback((presetKey: keyof typeof BMS_PRESET_COMMANDS | 'JK_16S_REAL' | 'OKINAWA_DUAL_REAL') => {
+    addHexLog('SYS', 'SIMULATION', `Simulating Live Hardware Packet: ${presetKey}`);
     
     let mockBytes: number[];
-    if (presetKey.startsWith('DALY')) {
-      // Daly 0x90 mock frame: 58.4V, 0.0A, 85% SOC
-      mockBytes = [0xA5, 0x01, 0x90, 0x08, 0x02, 0x48, 0x00, 0x00, 0x75, 0x30, 0x03, 0x52, 0x00];
-    } else if (presetKey.startsWith('JBD')) {
-      // JBD Basic Info mock frame: 58.40V, 1.20A, 88% SOC, 28°C
-      mockBytes = [0xDD, 0x03, 0x00, 0x1B, 0x16, 0xD0, 0x00, 0x78, 0x09, 0xC4, 0x0B, 0xB8, 0x00, 0x2A, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x20, 0x58, 0x03, 0x01, 0x0B, 0xBA, 0x77];
-    } else {
-      // JK BMS Full Telemetry frame: 16 cells (3.65V each), 58.40V Total, 1.50A Current, 88% SOC, 28°C, 45 Cycles
+    if (presetKey === 'OKINAWA_DUAL_REAL' || presetKey === 'JK02_READ_INFO') {
+      // Okinawa Praise / i-Praise Dual Lithium Pack (JK02/Okinawa 67.2V 20S Pack @ 92% SOC, 28°C)
+      mockBytes = [
+        0xAA, 0x55, 0x90, 0xEB, 0x97, 0x1A, 0x40, 0x00, 0x5C, 0x1C, 0x00, 0x20,
+        0x01, 0x0E, 0x48, 0x02, 0x0E, 0x48, 0x03, 0x0E, 0x48, 0x04, 0x0E, 0x48,
+        0x05, 0x0E, 0x48, 0x06, 0x0E, 0x48, 0x07, 0x0E, 0x48, 0x08, 0x0E, 0x48,
+        0x09, 0x0E, 0x48, 0x0A, 0x0E, 0x48, 0x0B, 0x0E, 0x48, 0x0C, 0x0E, 0x48,
+        0x0D, 0x0E, 0x48, 0x0E, 0x0E, 0x48, 0x0F, 0x0E, 0x48, 0x10, 0x0E, 0x48
+      ];
+      setDeviceName('Okinawa Lithium Dual Battery');
+      setIsConnected(true);
+      setBmsData(prev => ({ ...prev, detectedProtocol: 'JK BMS' }));
+    } else if (presetKey === 'JK_16S_REAL' || presetKey.startsWith('JK')) {
+      // JK BMS 16S 60V Pack: 16 cells @ 3.65V = 58.40V, 1.5A discharge, 88% SOC, 28°C, 45 cycles
       mockBytes = [
         0x4E, 0x57, 0x00, 0x55, 0x00, 0x00, 0x00, 0x00, 0x06, 0x00, 0x01, 0x00, 0x00, 0x00, // Header
         0x79, 0x30, // Tag 0x79 (Cell voltages: 16 cells x 3 bytes = 48 bytes)
@@ -1329,6 +1366,21 @@ export function useBMS() {
         0x85, 0x58,       // Tag 0x85 SOC 88%
         0x87, 0x00, 0x2D  // Tag 0x87 Cycles 45
       ];
+      setDeviceName('JK BMS Smart 16S Pack');
+      setIsConnected(true);
+      setBmsData(prev => ({ ...prev, detectedProtocol: 'JK BMS' }));
+    } else if (presetKey.startsWith('DALY')) {
+      // Daly 0x90 mock frame: 58.4V, 0.0A, 85% SOC
+      mockBytes = [0xA5, 0x01, 0x90, 0x08, 0x02, 0x48, 0x00, 0x00, 0x75, 0x30, 0x03, 0x52, 0x00];
+      setDeviceName('Daly Smart BMS');
+      setIsConnected(true);
+      setBmsData(prev => ({ ...prev, detectedProtocol: 'Daly' }));
+    } else {
+      // JBD Basic Info mock frame: 58.40V, 1.20A, 88% SOC, 28°C
+      mockBytes = [0xDD, 0x03, 0x00, 0x1B, 0x16, 0xD0, 0x00, 0x78, 0x09, 0xC4, 0x0B, 0xB8, 0x00, 0x2A, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x20, 0x58, 0x03, 0x01, 0x0B, 0xBA, 0x77];
+      setDeviceName('JBD / Xiaoxiang BMS');
+      setIsConnected(true);
+      setBmsData(prev => ({ ...prev, detectedProtocol: 'JBD/Xiaoxiang' }));
     }
 
     const dataView = new DataView(new Uint8Array(mockBytes).buffer);
