@@ -151,15 +151,6 @@ export class VoltageSmoother {
   }
 }
 
-const generateEmptyCells = (count = 16): CellData[] => {
-  return Array.from({ length: count }).map((_, i) => ({
-    id: i + 1,
-    voltage: 3.65,
-    isBalancing: false,
-    healthStatus: 'Good'
-  }));
-};
-
 const INITIAL_DATA: BMSData = {
   voltage: 0.0,
   current: 0.0,
@@ -168,8 +159,8 @@ const INITIAL_DATA: BMSData = {
   status: 'Disconnected',
   power: 0,
   remainingCapacityAH: 0.0,
-  nominalCapacityAH: 30.0,
-  cells: generateEmptyCells(16),
+  nominalCapacityAH: 0.0,
+  cells: [],
   cycleCount: 0,
   estimatedRangeKM: 0.0,
   efficiencyWhPerKm: 22,
@@ -181,8 +172,8 @@ const INITIAL_DATA: BMSData = {
   reserveBuffer: 5,
   tripEnergyWh: 0,
   maxRangeKM: 70,
-  minVoltage: 52,
-  maxVoltage: 64.4,
+  minVoltage: 40,
+  maxVoltage: 84,
   errorLogs: [],
   rawHexLogs: [],
   autoPollEnabled: true,
@@ -293,12 +284,30 @@ export function useBMS() {
     } else if (command === 0x94) { // Cycles & Cell Count
       const cellCount = dataView.getUint8(4);
       const cycles = (dataView.getUint8(9) << 8) | dataView.getUint8(10);
-      addHexLog('RX', rawHex, `Daly 0x94 -> Cell Count: ${cellCount}S, Cycles: ${cycles}`);
-      setBmsData(prev => ({
-        ...prev,
-        cycleCount: cycles,
-        detectedProtocol: 'Daly'
-      }));
+      addHexLog('RX', rawHex, `Daly 0x94 -> Detected Cell Count: ${cellCount}S, Cycles: ${cycles}`);
+      setBmsData(prev => {
+        let updatedCells = [...prev.cells];
+        if (cellCount > 0 && updatedCells.length !== cellCount) {
+          if (updatedCells.length < cellCount) {
+            while (updatedCells.length < cellCount) {
+              updatedCells.push({
+                id: updatedCells.length + 1,
+                voltage: 0,
+                isBalancing: false,
+                healthStatus: 'Good'
+              });
+            }
+          } else {
+            updatedCells = updatedCells.slice(0, cellCount);
+          }
+        }
+        return {
+          ...prev,
+          cells: updatedCells,
+          cycleCount: cycles,
+          detectedProtocol: 'Daly'
+        };
+      });
     } else if (command === 0x95) { // Cell Voltages Frame (Daly packs 3 cell voltages into each 0x95 frame)
       const frameNo = dataView.getUint8(4);
       const c1V = ((dataView.getUint8(5) << 8) | dataView.getUint8(6)) / 1000;
@@ -310,6 +319,17 @@ export function useBMS() {
       setBmsData(prev => {
         const updatedCells = [...prev.cells];
         const startIndex = (frameNo - 1) * 3;
+
+        // Ensure updatedCells array is expanded as needed for incoming frame
+        const neededLength = startIndex + (c3V > 0 ? 3 : c2V > 0 ? 2 : c1V > 0 ? 1 : 0);
+        while (updatedCells.length < neededLength) {
+          updatedCells.push({
+            id: updatedCells.length + 1,
+            voltage: 0,
+            isBalancing: false,
+            healthStatus: 'Good'
+          });
+        }
 
         if (c1V > 0 && startIndex < updatedCells.length) {
           updatedCells[startIndex] = { id: startIndex + 1, voltage: c1V, isBalancing: false, healthStatus: c1V < 2.9 || c1V > 4.25 ? 'Warning' : 'Good' };

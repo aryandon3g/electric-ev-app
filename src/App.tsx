@@ -48,75 +48,105 @@ const SwipeAction = ({ label, icon: Icon, onAction, active }: { label: string, i
 
 const MiniGraph = ({ power, isConnected }: { power: number, isConnected: boolean }) => {
   const bars = Array.from({ length: 16 });
+  const absPower = Math.abs(power);
+  const maxScale = 1500; // 1.5kW full scale
+  const fillRatio = Math.min(1, absPower / maxScale);
+
   return (
     <div className="flex items-end justify-center h-10 gap-1.5 opacity-80">
       {bars.map((_, i) => {
-        const height = isConnected ? Math.max(10, Math.min(100, Math.random() * 30 + (Math.abs(power) / 10))) : 10;
+        const factor = Math.sin((i / 15) * Math.PI);
+        const height = isConnected && absPower > 0 ? Math.max(10, fillRatio * 90 * (0.6 + 0.4 * factor)) : 10;
         return (
-          <motion.div
+          <div
             key={i}
-            animate={{ height: `${height}%` }}
-            transition={isConnected ? { duration: 0.3 + Math.random() * 0.5, repeat: Infinity, repeatType: 'mirror' } : undefined}
-            className={`w-1.5 rounded-full ${isConnected ? 'bg-blue-500' : 'bg-gray-200'}`}
+            style={{ height: `${height}%` }}
+            className={`w-1.5 rounded-full transition-all duration-300 ${isConnected && absPower > 0 ? 'bg-blue-500' : 'bg-gray-200'}`}
           />
         );
       })}
     </div>
-  )
+  );
 };
 
 const CellVoltageGraph = ({ cells, isConnected }: { cells: CellData[], isConnected: boolean }) => {
   const [selectedCell, setSelectedCell] = useState<CellData | null>(null);
 
-  const maxV = isConnected ? Math.max(...cells.map(c => c.voltage)) : 0;
-  const minV = isConnected ? Math.min(...cells.map(c => c.voltage)) : 0;
+  if (!isConnected) {
+    return (
+      <div className="bg-gray-50 rounded-2xl p-6 border border-gray-100 flex flex-col items-center justify-center text-center gap-2 text-gray-400 my-2">
+        <Activity size={24} className="text-gray-300" />
+        <span className="text-xs font-bold uppercase tracking-wider text-gray-600">No BMS Connected</span>
+        <p className="text-[11px] text-gray-400 max-w-xs">
+          Connect your battery over Bluetooth. Cell count and individual cell voltages will be automatically detected.
+        </p>
+      </div>
+    );
+  }
+
+  if (cells.length === 0) {
+    return (
+      <div className="bg-gray-50 rounded-2xl p-6 border border-gray-100 flex flex-col items-center justify-center text-center gap-2 text-gray-400 my-2">
+        <RefreshCw size={24} className="text-blue-500 animate-spin mb-1" />
+        <span className="text-xs font-bold uppercase tracking-wider text-gray-700">Auto-Detecting Battery Cells...</span>
+        <p className="text-[11px] text-gray-400 max-w-xs">
+          Listening for cell telemetry frames from BMS hardware...
+        </p>
+      </div>
+    );
+  }
+
+  const validVoltages = cells.map(c => c.voltage).filter(v => v > 0);
+  const maxV = validVoltages.length > 0 ? Math.max(...validVoltages) : 4.2;
+  const minV = validVoltages.length > 0 ? Math.min(...validVoltages) : 3.0;
 
   return (
     <div className="flex flex-col gap-6 mt-2">
-      <div className="flex items-end justify-between h-32 gap-1.5 px-1">
+      <div className="flex items-end justify-between h-36 gap-1.5 px-1 overflow-x-auto [&::-webkit-scrollbar]:hidden">
         {cells.map((cell) => {
-          const isMax = isConnected && cell.voltage === maxV;
-          const isMin = isConnected && cell.voltage === minV;
-          const isWarning = isConnected && cell.healthStatus === 'Warning';
+          const isMax = validVoltages.length > 0 && cell.voltage === maxV && cell.voltage > 0;
+          const isMin = validVoltages.length > 0 && cell.voltage === minV && cell.voltage > 0;
+          const isWarning = cell.healthStatus === 'Warning';
           
-          let color = 'bg-gray-200';
+          let color = 'bg-blue-500';
           if (isWarning) color = 'bg-red-500';
-          else if (isMax) color = 'bg-blue-500';
+          else if (isMax) color = 'bg-blue-600';
           else if (isMin) color = 'bg-orange-500';
+          if (cell.voltage === 0) color = 'bg-gray-200';
 
-          const basePercent = isConnected ? Math.max(15, Math.min(100, ((cell.voltage - 3.0) / (4.2 - 3.0)) * 100)) : 10;
+          // Strictly calculate cell bar height based on measured voltage (2.5V -> 10%, 4.25V -> 100%)
+          const heightPercent = cell.voltage > 0 ? Math.max(12, Math.min(100, ((cell.voltage - 2.5) / (4.25 - 2.5)) * 100)) : 8;
           
           return (
-             <motion.div
-               key={cell.id}
-               onClick={() => isConnected && setSelectedCell(cell)}
-               animate={isConnected ? { height: [`${Math.max(10, basePercent - 8)}%`, `${Math.min(100, basePercent + 8)}%`, `${Math.max(10, basePercent - 8)}%`] } : { height: '10%' }}
-               transition={{ duration: 1 + Math.random() * 1.5, repeat: Infinity, ease: 'easeInOut' }}
-               className={`w-full rounded-t-full ${isConnected ? 'cursor-pointer hover:opacity-80' : ''} transition-all ${color} relative ${selectedCell?.id === cell.id ? 'ring-2 ring-offset-2 ring-gray-400 shadow-md scale-110 z-10' : ''}`}
-             >
-               {cell.isBalancing && isConnected && (
-                 <div className="absolute -top-3 left-1/2 -translate-x-1/2 w-1.5 h-1.5 bg-yellow-400 rounded-full animate-pulse shadow-sm" />
-               )}
-               {isWarning && isConnected && (
-                 <div className="absolute -top-5 left-1/2 -translate-x-1/2 text-red-500">
-                   <AlertCircle size={12} className="animate-pulse" />
-                 </div>
-               )}
-             </motion.div>
+            <div
+              key={cell.id}
+              onClick={() => setSelectedCell(cell)}
+              style={{ height: `${heightPercent}%` }}
+              className={`flex-1 min-w-[12px] rounded-t-lg cursor-pointer hover:opacity-80 transition-all duration-300 ${color} relative ${selectedCell?.id === cell.id ? 'ring-2 ring-offset-2 ring-blue-500 shadow-md scale-105 z-10' : ''}`}
+            >
+              {cell.isBalancing && (
+                <div className="absolute -top-3 left-1/2 -translate-x-1/2 w-2 h-2 bg-yellow-400 rounded-full animate-pulse shadow-sm" />
+              )}
+              {isWarning && (
+                <div className="absolute -top-5 left-1/2 -translate-x-1/2 text-red-500">
+                  <AlertCircle size={12} className="animate-pulse" />
+                </div>
+              )}
+            </div>
           );
         })}
       </div>
       
-      <div className="h-24">
-        {selectedCell && isConnected ? (
+      <div className="min-h-24">
+        {selectedCell ? (
           <motion.div initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} className="bg-gray-50 rounded-2xl p-4 border border-gray-100 flex items-center justify-between h-full shadow-sm">
             <div>
               <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1 flex items-center gap-1.5">
-                Cell {selectedCell.id}
+                Cell #{selectedCell.id}
                 {selectedCell.healthStatus === 'Warning' && <AlertCircle className="w-3 h-3 text-red-500" />}
               </div>
               <div className="text-2xl font-mono font-extrabold text-gray-900">
-                {selectedCell.voltage.toFixed(3)}<span className="text-sm text-gray-400 ml-1">V</span>
+                {selectedCell.voltage > 0 ? selectedCell.voltage.toFixed(3) : '---'}<span className="text-sm text-gray-400 ml-1">V</span>
               </div>
             </div>
             <div className="text-right flex flex-col items-end gap-1.5">
@@ -128,10 +158,10 @@ const CellVoltageGraph = ({ cells, isConnected }: { cells: CellData[], isConnect
                   <span className="w-1.5 h-1.5 bg-yellow-500 rounded-full animate-pulse"></span> Balancing
                 </div>
               )}
-              {selectedCell.voltage === maxV && (
+              {selectedCell.voltage === maxV && selectedCell.voltage > 0 && (
                 <div className="text-[9px] font-bold text-blue-600 uppercase tracking-wider px-2 py-0.5 bg-blue-50 rounded-full">Max Voltage</div>
               )}
-              {selectedCell.voltage === minV && (
+              {selectedCell.voltage === minV && selectedCell.voltage > 0 && (
                 <div className="text-[9px] font-bold text-orange-600 uppercase tracking-wider px-2 py-0.5 bg-orange-50 rounded-full">Min Voltage</div>
               )}
             </div>
@@ -139,7 +169,7 @@ const CellVoltageGraph = ({ cells, isConnected }: { cells: CellData[], isConnect
         ) : (
           <div className="bg-gray-50 rounded-2xl p-4 border border-gray-100 h-full flex flex-col items-center justify-center text-xs font-bold text-gray-400 uppercase tracking-wider text-center gap-2">
             <Activity size={20} className="text-gray-300" />
-            Tap a bar above to inspect cell voltage
+            Tap any cell bar above to inspect details
           </div>
         )}
       </div>
@@ -733,11 +763,17 @@ export default function App() {
 
               <div className="bg-white rounded-3xl p-6 shadow-[0_8px_30px_rgba(0,0,0,0.04)]">
                 <div className="flex justify-between items-center mb-6">
-                  <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider">Cell Voltages ({bmsData.cells.length}S)</h3>
-                  <div className="bg-gray-50 px-3 py-1.5 rounded-lg border border-gray-100 flex items-center gap-2">
-                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Delta</span>
-                    <span className="text-sm font-mono font-bold text-blue-600">{(Math.max(...bmsData.cells.map(c => c.voltage)) - Math.min(...bmsData.cells.map(c => c.voltage))).toFixed(3)}V</span>
-                  </div>
+                  <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider">
+                    {bmsData.cells.length > 0 ? `Cell Voltages (${bmsData.cells.length}S Auto-Detected)` : 'Cell Voltages'}
+                  </h3>
+                  {bmsData.cells.length > 0 && (
+                    <div className="bg-gray-50 px-3 py-1.5 rounded-lg border border-gray-100 flex items-center gap-2">
+                      <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Delta</span>
+                      <span className="text-sm font-mono font-bold text-blue-600">
+                        {(Math.max(...bmsData.cells.map(c => c.voltage)) - Math.min(...bmsData.cells.map(c => c.voltage))).toFixed(3)}V
+                      </span>
+                    </div>
+                  )}
                 </div>
                 
                 <CellVoltageGraph cells={bmsData.cells} isConnected={isConnected} />
