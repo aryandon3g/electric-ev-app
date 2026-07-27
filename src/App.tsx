@@ -502,6 +502,48 @@ export default function App() {
                 />
               </div>
 
+              {/* Status Banner when Disconnected or Connected */}
+              {!isConnected ? (
+                <div className="w-full bg-white rounded-3xl p-5 shadow-[0_8px_30px_rgba(0,0,0,0.04)] border border-gray-100 flex flex-col items-center text-center space-y-3">
+                  <div className="w-12 h-12 bg-blue-50 text-blue-500 rounded-2xl flex items-center justify-center">
+                    <Radio size={24} className="animate-pulse" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-gray-900">No BMS Connected</h3>
+                    <p className="text-xs text-gray-400 mt-1 max-w-xs">
+                      Connect your Daly, JBD, or custom UART BMS over Web Bluetooth to read live telemetry.
+                    </p>
+                  </div>
+                  <button
+                    onClick={connectBluetooth}
+                    disabled={isConnecting}
+                    className="w-full py-3 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-bold text-sm rounded-2xl shadow-md transition-colors flex items-center justify-center gap-2"
+                  >
+                    <Bluetooth size={18} />
+                    <span>{isConnecting ? 'Searching BLE Devices...' : 'Connect Bluetooth BMS'}</span>
+                  </button>
+                </div>
+              ) : (
+                <div className="w-full grid grid-cols-2 gap-3">
+                  <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Pack Voltage</span>
+                    <span className="text-xl font-mono font-black text-gray-900">{bmsData.voltage.toFixed(2)}<span className="text-xs font-normal text-gray-400 ml-0.5">V</span></span>
+                  </div>
+                  <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Live Current</span>
+                    <span className="text-xl font-mono font-black text-gray-900">{bmsData.current.toFixed(1)}<span className="text-xs font-normal text-gray-400 ml-0.5">A</span></span>
+                  </div>
+                  <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Protocol</span>
+                    <span className="text-xs font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-md inline-block">{bmsData.detectedProtocol || 'Listening...'}</span>
+                  </div>
+                  <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Temperature</span>
+                    <span className="text-xl font-mono font-black text-gray-900">{bmsData.temperature.toFixed(1)}<span className="text-xs font-normal text-gray-400 ml-0.5">°C</span></span>
+                  </div>
+                </div>
+              )}
+
               <div className="w-full">
                 {bmsData.status === 'Charging' && bmsData.timeToFullChargeMinutes !== null ? (
                   <div className="bg-blue-50 border border-blue-100 rounded-3xl p-4 shadow-sm flex items-center justify-between">
@@ -518,23 +560,6 @@ export default function App() {
                      <span className="bg-blue-600 text-white text-[9px] uppercase tracking-wider font-bold px-2 py-0.5 rounded-full">Charging</span>
                   </div>
                 ) : null}
-              </div>
-
-              {/* Quick BLE Debugger Console directly on Dashboard */}
-              <div className="w-full">
-                <BLEDebuggerConsole
-                  rawLogs={bmsData.rawHexLogs}
-                  onSendHex={sendHexCommand}
-                  onSimulate={simulateIncomingPacket}
-                  onClearLogs={clearHexLogs}
-                  autoPollEnabled={bmsData.autoPollEnabled}
-                  onToggleAutoPoll={toggleAutoPoll}
-                  isConnected={isConnected}
-                  detectedProtocol={bmsData.detectedProtocol}
-                  serviceUUID={bmsData.serviceUUID}
-                  notifyCharUUID={bmsData.notifyCharUUID}
-                  writeCharUUID={bmsData.writeCharUUID}
-                />
               </div>
 
               <div className="w-full mt-auto pt-2">

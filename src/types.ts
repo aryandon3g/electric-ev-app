@@ -18,7 +18,7 @@ export interface BMSData {
   current: number;
   capacityPercent: number;
   temperature: number;
-  status: 'Normal' | 'Charging' | 'Discharging' | 'Warning' | 'Error';
+  status: 'Normal' | 'Charging' | 'Discharging' | 'Warning' | 'Error' | 'Disconnected';
   power: number; // Watts
   remainingCapacityAH: number;
   nominalCapacityAH: number;
