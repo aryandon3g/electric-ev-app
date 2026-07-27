@@ -1,13 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useBMS } from './hooks/useBMS';
+import { useBMS, BMS_PRESET_COMMANDS } from './hooks/useBMS';
 import { motion, useMotionValue } from 'motion/react';
 import { LiveProgressBar } from './components/LiveProgressBar';
 import { 
   Bluetooth, BluetoothOff, Lock, Unlock, 
   Activity, Settings, Thermometer, Battery, 
-  ShieldCheck, Zap, Moon, Clock, Navigation, Map, Power, FileWarning, AlertTriangle, AlertCircle, Play, Pause, FastForward, Delete
+  ShieldCheck, Zap, Moon, Clock, Map, FileWarning, AlertCircle,
+  Delete, Terminal, Send, RefreshCw, Trash2, Cpu, Radio, CheckCircle2
 } from 'lucide-react';
-import { CellData } from './types';
+import { CellData, BLEHexLog } from './types';
 
 const SwipeAction = ({ label, icon: Icon, onAction, active }: { label: string, icon: any, onAction: () => void, active: boolean }) => {
   const x = useMotionValue(0);
@@ -20,7 +21,7 @@ const SwipeAction = ({ label, icon: Icon, onAction, active }: { label: string, i
     }
   }, []);
 
-  const slideDistance = width ? width - 56 : 280; // 56 is button width + padding
+  const slideDistance = width ? width - 56 : 280;
 
   return (
     <div ref={containerRef} className="relative w-full h-16 bg-white shadow-[inset_0_2px_4px_rgba(0,0,0,0.06)] rounded-full flex items-center px-1 overflow-hidden border border-gray-100">
@@ -138,7 +139,7 @@ const CellVoltageGraph = ({ cells, isConnected }: { cells: CellData[], isConnect
         ) : (
           <div className="bg-gray-50 rounded-2xl p-4 border border-gray-100 h-full flex flex-col items-center justify-center text-xs font-bold text-gray-400 uppercase tracking-wider text-center gap-2">
             <Activity size={20} className="text-gray-300" />
-            Tap a dancing bar<br/>to view cell diagnostic
+            Tap a bar above to inspect cell voltage
           </div>
         )}
       </div>
@@ -177,7 +178,7 @@ const Keypad = ({ onUnlock }: { onUnlock: () => void }) => {
       <div className="text-center mb-8">
         <Lock className="w-10 h-10 text-gray-400 mx-auto mb-3" />
         <h2 className="text-xl font-bold text-gray-900">Enter PIN</h2>
-        <p className="text-sm text-gray-400 mt-1">Controls are locked</p>
+        <p className="text-sm text-gray-400 mt-1">Controls are locked (Default: 8931)</p>
       </div>
 
       <div className="flex gap-4 mb-10">
@@ -214,9 +215,213 @@ const Keypad = ({ onUnlock }: { onUnlock: () => void }) => {
   );
 };
 
+// --- RAW BLE TERMINAL & COMMAND SENDER COMPONENT ---
+const BLEDebuggerConsole = ({
+  rawLogs,
+  onSendHex,
+  onSimulate,
+  onClearLogs,
+  autoPollEnabled,
+  onToggleAutoPoll,
+  isConnected,
+  detectedProtocol,
+  serviceUUID,
+  notifyCharUUID,
+  writeCharUUID
+}: {
+  rawLogs: BLEHexLog[];
+  onSendHex: (hex: string) => void;
+  onSimulate: (presetKey: keyof typeof BMS_PRESET_COMMANDS) => void;
+  onClearLogs: () => void;
+  autoPollEnabled: boolean;
+  onToggleAutoPoll: () => void;
+  isConnected: boolean;
+  detectedProtocol?: string;
+  serviceUUID?: string;
+  notifyCharUUID?: string;
+  writeCharUUID?: string;
+}) => {
+  const [customHexInput, setCustomHexInput] = useState('A5 40 90 08 00 00 00 00 00 00 00 00 75');
+  const logContainerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (logContainerRef.current) {
+      logContainerRef.current.scrollTop = 0;
+    }
+  }, [rawLogs]);
+
+  const handleSendCustom = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!customHexInput.trim()) return;
+    onSendHex(customHexInput);
+  };
+
+  return (
+    <div className="bg-slate-900 text-slate-100 rounded-3xl p-5 shadow-xl border border-slate-800 font-sans space-y-4">
+      {/* Header */}
+      <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+        <div className="flex items-center gap-2">
+          <Terminal size={20} className="text-emerald-400" />
+          <h3 className="text-sm font-bold tracking-wider uppercase text-slate-200">Raw BLE Console & Packet Log</h3>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={onToggleAutoPoll}
+            className={`px-2.5 py-1 rounded-full text-[10px] font-mono font-bold flex items-center gap-1 transition-colors ${autoPollEnabled ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-slate-800 text-slate-400'}`}
+          >
+            <Radio size={12} className={autoPollEnabled ? 'animate-pulse text-emerald-400' : ''} />
+            {autoPollEnabled ? 'Auto-Poll ON' : 'Auto-Poll OFF'}
+          </button>
+          <button
+            onClick={onClearLogs}
+            className="p-1.5 text-slate-400 hover:text-slate-200 bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors"
+            title="Clear Logs"
+          >
+            <Trash2 size={14} />
+          </button>
+        </div>
+      </div>
+
+      {/* Connected GATT Info Badge */}
+      <div className="bg-slate-800/80 rounded-2xl p-3 border border-slate-700/60 text-xs font-mono space-y-1">
+        <div className="flex justify-between items-center text-slate-300">
+          <span className="text-slate-400">BLE Status:</span>
+          <span className={`font-bold flex items-center gap-1 ${isConnected ? 'text-emerald-400' : 'text-amber-400'}`}>
+            <span className={`w-2 h-2 rounded-full ${isConnected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
+            {isConnected ? 'GATT Connected' : 'Disconnected'}
+          </span>
+        </div>
+        {detectedProtocol && (
+          <div className="flex justify-between items-center text-slate-300">
+            <span className="text-slate-400">Protocol:</span>
+            <span className="text-cyan-400 font-bold">{detectedProtocol}</span>
+          </div>
+        )}
+        {serviceUUID && (
+          <div className="flex justify-between items-center text-slate-400 text-[11px] truncate">
+            <span>Service UUID:</span>
+            <span className="text-slate-200 truncate ml-2 font-mono">{serviceUUID}</span>
+          </div>
+        )}
+        {notifyCharUUID && (
+          <div className="flex justify-between items-center text-slate-400 text-[11px] truncate">
+            <span>Notify Char:</span>
+            <span className="text-slate-200 truncate ml-2 font-mono">{notifyCharUUID}</span>
+          </div>
+        )}
+      </div>
+
+      {/* Preset Command Quick Poll Buttons */}
+      <div className="space-y-1.5">
+        <span className="text-[10px] font-bold tracking-wider text-slate-400 uppercase">Preset Hex Commands:</span>
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            onClick={() => onSendHex(BMS_PRESET_COMMANDS.DALY_READ_SOC_VOLTS.hex)}
+            className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-emerald-400 rounded-xl text-xs font-mono font-semibold text-left transition-colors flex items-center justify-between border border-slate-700"
+          >
+            <span>Daly Poll (0x90)</span>
+            <Send size={12} className="opacity-70" />
+          </button>
+          <button
+            onClick={() => onSendHex(BMS_PRESET_COMMANDS.DALY_READ_CELL_VOLTAGES.hex)}
+            className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-emerald-400 rounded-xl text-xs font-mono font-semibold text-left transition-colors flex items-center justify-between border border-slate-700"
+          >
+            <span>Daly Cells (0x95)</span>
+            <Send size={12} className="opacity-70" />
+          </button>
+          <button
+            onClick={() => onSendHex(BMS_PRESET_COMMANDS.JBD_READ_BASIC_INFO.hex)}
+            className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-cyan-400 rounded-xl text-xs font-mono font-semibold text-left transition-colors flex items-center justify-between border border-slate-700"
+          >
+            <span>JBD Read Status</span>
+            <Send size={12} className="opacity-70" />
+          </button>
+          <button
+            onClick={() => onSendHex(BMS_PRESET_COMMANDS.JBD_READ_CELL_VOLTAGES.hex)}
+            className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-cyan-400 rounded-xl text-xs font-mono font-semibold text-left transition-colors flex items-center justify-between border border-slate-700"
+          >
+            <span>JBD Cell Volts</span>
+            <Send size={12} className="opacity-70" />
+          </button>
+        </div>
+      </div>
+
+      {/* Manual Hex Input Form */}
+      <form onSubmit={handleSendCustom} className="flex gap-2">
+        <input
+          type="text"
+          value={customHexInput}
+          onChange={(e) => setCustomHexInput(e.target.value)}
+          placeholder="Hex bytes e.g. A5 40 90..."
+          className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono text-emerald-300 focus:outline-none focus:border-emerald-500 placeholder:text-slate-600"
+        />
+        <button
+          type="submit"
+          className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white font-bold text-xs rounded-xl flex items-center gap-1.5 transition-colors shadow-sm"
+        >
+          <Send size={14} />
+          Send
+        </button>
+      </form>
+
+      {/* Live Raw Terminal Stream Display */}
+      <div className="space-y-1">
+        <div className="flex justify-between items-center text-[10px] text-slate-400 font-mono">
+          <span>PACKET LOG STREAM ({rawLogs.length} entries):</span>
+          {!isConnected && (
+            <button
+              type="button"
+              onClick={() => onSimulate('DALY_READ_SOC_VOLTS')}
+              className="text-cyan-400 underline hover:text-cyan-300"
+            >
+              Simulate RX Packet
+            </button>
+          )}
+        </div>
+        <div
+          ref={logContainerRef}
+          className="h-44 bg-slate-950 rounded-2xl p-3 border border-slate-800 overflow-y-auto space-y-2 font-mono text-[11px] [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-thumb]:bg-slate-800"
+        >
+          {rawLogs.length === 0 ? (
+            <div className="h-full flex flex-col items-center justify-center text-slate-600 text-xs">
+              <Cpu size={24} className="mb-2 opacity-40" />
+              <span>No BLE notifications received yet.</span>
+              <span className="text-[10px] text-slate-700 mt-1">Connect device & press a Poll button above.</span>
+            </div>
+          ) : (
+            rawLogs.map((log) => (
+              <div key={log.id} className="flex flex-col gap-0.5 border-b border-slate-900/80 pb-1.5 last:border-0">
+                <div className="flex items-center justify-between text-[10px]">
+                  <span className="text-slate-500">{log.timestamp}</span>
+                  <span
+                    className={`px-1.5 py-0.2 rounded text-[9px] font-bold ${
+                      log.type === 'RX'
+                        ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                        : log.type === 'TX'
+                        ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
+                        : 'bg-slate-800 text-slate-400'
+                    }`}
+                  >
+                    {log.type}
+                  </span>
+                </div>
+                <div className="text-slate-200 font-bold break-all">{log.hex}</div>
+                {log.decodedInfo && (
+                  <div className="text-slate-400 text-[10px] italic">{log.decodedInfo}</div>
+                )}
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export default function App() {
   const { 
-    bmsData, connectBluetooth, disconnect, isConnected, 
+    bmsData, connectBluetooth, disconnect, isConnected, isConnecting, error, deviceName,
+    sendHexCommand, simulateIncomingPacket, toggleAutoPoll, clearHexLogs,
     toggleAntiTheft, setChargeLimit, setReserveBuffer, setMaxRange, setMinVoltage, setMaxVoltage
   } = useBMS();
 
@@ -231,24 +436,63 @@ export default function App() {
       <div className="w-full max-w-md bg-[#F8F9FA] min-h-screen relative shadow-2xl overflow-hidden flex flex-col">
         
         {/* Header */}
-        <header className="px-6 pt-8 pb-2 flex items-center justify-end z-10">
+        <header className="px-6 pt-6 pb-2 flex items-center justify-between z-10 bg-[#F8F9FA]/80 backdrop-blur-md sticky top-0">
+          <div>
+            <h1 className="text-lg font-black tracking-tight text-gray-900">E-Scooter BMS</h1>
+            <p className="text-[11px] font-medium text-gray-400">
+              {isConnected ? `Connected: ${deviceName || 'BMS Device'}` : 'BLE Disconnected'}
+            </p>
+          </div>
           <div className="flex gap-2">
             <button 
               onClick={isConnected ? disconnect : connectBluetooth}
-              className={`w-10 h-10 rounded-full flex items-center justify-center shadow-sm transition-colors ${isConnected ? 'bg-blue-50 text-blue-500' : 'bg-white text-gray-400 border border-gray-100'}`}
+              disabled={isConnecting}
+              className={`px-3 py-2 rounded-full flex items-center gap-1.5 shadow-sm text-xs font-bold transition-all ${
+                isConnected 
+                  ? 'bg-blue-50 text-blue-600 border border-blue-100 hover:bg-blue-100' 
+                  : isConnecting
+                  ? 'bg-amber-50 text-amber-600 border border-amber-100 animate-pulse'
+                  : 'bg-white text-gray-700 border border-gray-200 hover:bg-gray-50'
+              }`}
             >
-              {isConnected ? <Bluetooth size={18} /> : <BluetoothOff size={18} />}
+              {isConnecting ? (
+                <>
+                  <RefreshCw size={14} className="animate-spin text-amber-500" />
+                  <span>Connecting...</span>
+                </>
+              ) : isConnected ? (
+                <>
+                  <Bluetooth size={14} className="text-blue-500" />
+                  <span>Disconnect</span>
+                </>
+              ) : (
+                <>
+                  <BluetoothOff size={14} className="text-gray-400" />
+                  <span>Connect BLE</span>
+                </>
+              )}
             </button>
           </div>
         </header>
 
+        {/* Global Error Banner */}
+        {error && (
+          <div className="mx-6 mt-2 p-3 bg-red-50 border border-red-200 rounded-2xl flex items-start gap-2.5 text-xs text-red-700 shadow-sm">
+            <AlertCircle size={18} className="text-red-500 shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <span className="font-bold block">Bluetooth Connection Error</span>
+              <span>{error}</span>
+            </div>
+          </div>
+        )}
+
         {/* Scrollable Content Area */}
-        <main className="flex-1 overflow-y-auto px-6 pb-24 space-y-4 [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
+        <main className="flex-1 overflow-y-auto px-6 pb-28 pt-2 space-y-4 [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
           
           {activeTab === 'dashboard' && (
-            <motion.div initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} className="flex flex-col items-center h-full">
+            <motion.div initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} className="flex flex-col items-center h-full space-y-4">
               
-              <div className="w-full mb-4">
+              <div className="w-full">
                 <LiveProgressBar 
                   percentage={bmsData.capacityPercent} 
                   isCharging={bmsData.status === 'Charging'} 
@@ -258,9 +502,9 @@ export default function App() {
                 />
               </div>
 
-              <div className="w-full mb-4">
+              <div className="w-full">
                 {bmsData.status === 'Charging' && bmsData.timeToFullChargeMinutes !== null ? (
-                  <div className="col-span-2 bg-blue-50 border border-blue-100 rounded-3xl p-4 shadow-sm flex items-center justify-between">
+                  <div className="bg-blue-50 border border-blue-100 rounded-3xl p-4 shadow-sm flex items-center justify-between">
                      <div className="flex items-center gap-3 text-blue-600">
                        <Clock size={20} />
                        <div>
@@ -276,9 +520,24 @@ export default function App() {
                 ) : null}
               </div>
 
+              {/* Quick BLE Debugger Console directly on Dashboard */}
+              <div className="w-full">
+                <BLEDebuggerConsole
+                  rawLogs={bmsData.rawHexLogs}
+                  onSendHex={sendHexCommand}
+                  onSimulate={simulateIncomingPacket}
+                  onClearLogs={clearHexLogs}
+                  autoPollEnabled={bmsData.autoPollEnabled}
+                  onToggleAutoPoll={toggleAutoPoll}
+                  isConnected={isConnected}
+                  detectedProtocol={bmsData.detectedProtocol}
+                  serviceUUID={bmsData.serviceUUID}
+                  notifyCharUUID={bmsData.notifyCharUUID}
+                  writeCharUUID={bmsData.writeCharUUID}
+                />
+              </div>
 
-
-              <div className="w-full mt-auto">
+              <div className="w-full mt-auto pt-2">
                 <SwipeAction 
                   label={bmsData.isLocked ? "Swipe to Unlock" : "Swipe to Lock"}
                   icon={bmsData.isLocked ? Lock : Unlock}
@@ -359,7 +618,7 @@ export default function App() {
 
               <div className="bg-white rounded-3xl p-6 shadow-[0_8px_30px_rgba(0,0,0,0.04)]">
                 <div className="flex justify-between items-center mb-6">
-                  <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider">Cell Voltages (16S)</h3>
+                  <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider">Cell Voltages ({bmsData.cells.length}S)</h3>
                   <div className="bg-gray-50 px-3 py-1.5 rounded-lg border border-gray-100 flex items-center gap-2">
                     <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Delta</span>
                     <span className="text-sm font-mono font-bold text-blue-600">{(Math.max(...bmsData.cells.map(c => c.voltage)) - Math.min(...bmsData.cells.map(c => c.voltage))).toFixed(3)}V</span>
@@ -369,38 +628,20 @@ export default function App() {
                 <CellVoltageGraph cells={bmsData.cells} isConnected={isConnected} />
               </div>
 
-              <div className="bg-white rounded-3xl p-6 shadow-[0_8px_30px_rgba(0,0,0,0.04)] grid grid-cols-2 gap-4">
-                <div>
-                  <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">State of Health</h3>
-                  <p className="text-2xl font-extrabold text-gray-900">{isConnected ? '98.5%' : '0%'}</p>
-                </div>
-                <div>
-                  <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Charge Cycles</h3>
-                  <p className="text-2xl font-extrabold text-gray-900">{bmsData.cycleCount}</p>
-                </div>
-              </div>
-
-              {bmsData.errorLogs.length > 0 && (
-                <div className="bg-white rounded-3xl p-6 shadow-[0_8px_30px_rgba(0,0,0,0.04)]">
-                  <div className="flex items-center gap-2 mb-4">
-                    <FileWarning size={20} className="text-red-500" />
-                    <span className="text-sm font-bold text-gray-900 uppercase tracking-wider">Diagnostic Logs</span>
-                  </div>
-                  <div className="space-y-3">
-                    {bmsData.errorLogs.slice(0, 3).map((log, idx) => (
-                      <div key={idx} className="bg-gray-50 p-3 rounded-2xl border border-gray-100 flex flex-col gap-1.5">
-                        <div className="flex items-center justify-between">
-                          <span className="text-[10px] font-bold font-mono text-red-600 bg-red-50 px-2 py-0.5 rounded-lg border border-red-100">
-                            {log.code}
-                          </span>
-                          <span className="text-[10px] text-gray-400 font-medium">{log.timestamp}</span>
-                        </div>
-                        <p className="text-xs font-medium text-gray-600">{log.message}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
+              {/* Full Raw BLE Terminal */}
+              <BLEDebuggerConsole
+                rawLogs={bmsData.rawHexLogs}
+                onSendHex={sendHexCommand}
+                onSimulate={simulateIncomingPacket}
+                onClearLogs={clearHexLogs}
+                autoPollEnabled={bmsData.autoPollEnabled}
+                onToggleAutoPoll={toggleAutoPoll}
+                isConnected={isConnected}
+                detectedProtocol={bmsData.detectedProtocol}
+                serviceUUID={bmsData.serviceUUID}
+                notifyCharUUID={bmsData.notifyCharUUID}
+                writeCharUUID={bmsData.writeCharUUID}
+              />
 
             </motion.div>
           )}
@@ -501,33 +742,6 @@ export default function App() {
                           value={bmsData.reserveBuffer}
                           onChange={(e) => setReserveBuffer(Number(e.target.value))}
                           className="w-24 px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 font-bold focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-right"
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="bg-white rounded-3xl p-6 shadow-[0_8px_30px_rgba(0,0,0,0.04)]">
-                    <div className="flex items-center gap-4 mb-6">
-                      <div className="w-12 h-12 rounded-2xl bg-purple-50 text-purple-500 flex items-center justify-center">
-                        <Navigation size={24} />
-                      </div>
-                      <div>
-                        <h3 className="text-base font-bold text-gray-900">EV Model Max Range</h3>
-                        <p className="text-xs font-medium text-gray-400">Set 100% SoC range estimate</p>
-                      </div>
-                    </div>
-
-                    <div className="px-2 pt-2">
-                      <div className="flex items-center justify-between">
-                        <label className="text-sm font-bold text-gray-900">
-                          Max Range (km)
-                        </label>
-                        <input 
-                          type="number" 
-                          min="1" 
-                          value={bmsData.maxRangeKM}
-                          onChange={(e) => setMaxRange(Number(e.target.value))}
-                          className="w-28 px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 font-bold focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent text-right"
                         />
                       </div>
                     </div>

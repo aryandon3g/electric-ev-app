@@ -5,6 +5,14 @@ export interface CellData {
   healthStatus?: 'Good' | 'Warning' | 'Critical';
 }
 
+export interface BLEHexLog {
+  id: string;
+  timestamp: string;
+  type: 'RX' | 'TX' | 'SYS';
+  hex: string;
+  decodedInfo?: string;
+}
+
 export interface BMSData {
   voltage: number;
   current: number;
@@ -31,4 +39,14 @@ export interface BMSData {
   minVoltage: number;
   maxVoltage: number;
   errorLogs: { timestamp: string; code: string; message: string }[];
+
+  // BLE Specific & Raw Packet Debugging
+  serviceUUID?: string;
+  notifyCharUUID?: string;
+  writeCharUUID?: string;
+  detectedProtocol?: 'Daly' | 'JBD/Xiaoxiang' | 'Nordic UART' | 'Standard Battery' | 'Unknown';
+  rawHexLogs: BLEHexLog[];
+  autoPollEnabled: boolean;
+  pollingIntervalMs: number;
 }
+
