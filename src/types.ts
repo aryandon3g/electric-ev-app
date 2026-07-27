@@ -30,6 +30,7 @@ export interface BMSData {
   efficiencyWhPerKm: number;
   thermalState: 'Normal' | 'Throttled' | 'Critical';
   isLocked: boolean;
+  chargeDischargeActive: boolean; // Managed via Swipe Lock (On/Off)
   alerts: string[];
   timeToFullChargeMinutes: number | null;
   chargeLimit: number;
@@ -38,6 +39,12 @@ export interface BMSData {
   maxRangeKM: number;
   minVoltage: number;
   maxVoltage: number;
+  
+  // Range Calculation Configs (Controller inputs)
+  rangeCalcMode: 'voltage' | 'soc';
+  rangeOffsetKM: number; // Plus / Minus Range Modifier in KM
+  rangePerVolt: number;   // Range multiplier per Volt above minVoltage
+  
   errorLogs: { timestamp: string; code: string; message: string }[];
 
   // BLE Specific & Raw Packet Debugging

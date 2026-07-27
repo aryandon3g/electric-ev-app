@@ -207,8 +207,8 @@ const Keypad = ({ onUnlock }: { onUnlock: () => void }) => {
     <div className="flex flex-col items-center justify-center h-full pt-8">
       <div className="text-center mb-8">
         <Lock className="w-10 h-10 text-gray-400 mx-auto mb-3" />
-        <h2 className="text-xl font-bold text-gray-900">Enter PIN</h2>
-        <p className="text-sm text-gray-400 mt-1">Controls are locked (Default: 8931)</p>
+        <h2 className="text-xl font-bold text-gray-900">Enter Security PIN</h2>
+        <p className="text-sm text-gray-400 mt-1">Controls are password protected</p>
       </div>
 
       <div className="flex gap-4 mb-10">
@@ -248,7 +248,8 @@ const Keypad = ({ onUnlock }: { onUnlock: () => void }) => {
 export default function App() {
   const { 
     bmsData, connectBluetooth, disconnect, isConnected, isConnecting, error, deviceName,
-    toggleAntiTheft, setChargeLimit, setReserveBuffer, setMinVoltage, setMaxVoltage
+    toggleAntiTheft, setChargeLimit, setReserveBuffer, setMinVoltage, setMaxVoltage,
+    setRangeCalcMode, setRangeOffsetKM, setRangePerVolt, setMaxRange
   } = useBMS();
 
   const [activeTab, setActiveTab] = useState<'dashboard' | 'diagnostics' | 'controls'>('dashboard');
@@ -330,24 +331,16 @@ export default function App() {
 
               {/* Status Banner when Disconnected or Connected */}
               {!isConnected ? (
-                <div className="w-full bg-white rounded-3xl p-5 shadow-[0_8px_30px_rgba(0,0,0,0.04)] border border-gray-100 flex flex-col items-center text-center space-y-3">
-                  <div className="w-12 h-12 bg-blue-50 text-blue-500 rounded-2xl flex items-center justify-center">
-                    <Radio size={24} className="animate-pulse" />
+                <div className="w-full bg-white rounded-3xl p-5 shadow-[0_8px_30px_rgba(0,0,0,0.04)] border border-gray-100 flex flex-col items-center text-center space-y-2">
+                  <div className="w-10 h-10 bg-blue-50 text-blue-500 rounded-2xl flex items-center justify-center">
+                    <Radio size={20} className="animate-pulse" />
                   </div>
                   <div>
-                    <h3 className="text-sm font-bold text-gray-900">No BMS Connected</h3>
-                    <p className="text-xs text-gray-400 mt-1 max-w-xs">
-                      Connect your Daly, JBD, or custom UART BMS over Web Bluetooth to read live telemetry.
+                    <h3 className="text-xs font-bold text-gray-800 uppercase tracking-wider">BLE Disconnected</h3>
+                    <p className="text-[11px] text-gray-400 mt-0.5">
+                      Tap the top-right <span className="font-bold text-blue-600">Connect BLE</span> button to pair with your BMS.
                     </p>
                   </div>
-                  <button
-                    onClick={connectBluetooth}
-                    disabled={isConnecting}
-                    className="w-full py-3 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-bold text-sm rounded-2xl shadow-md transition-colors flex items-center justify-center gap-2"
-                  >
-                    <Bluetooth size={18} />
-                    <span>{isConnecting ? 'Searching BLE Devices...' : 'Connect Bluetooth BMS'}</span>
-                  </button>
                 </div>
               ) : (
                 <div className="w-full space-y-3">
@@ -390,11 +383,33 @@ export default function App() {
                 ) : null}
               </div>
 
-              <div className="w-full mt-auto pt-2">
+              {/* Charge & Discharge Control (Linked to Swipe Lock) */}
+              <div className="w-full mt-auto pt-2 space-y-2">
+                <div className="flex items-center justify-between px-2">
+                  <span className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">MOSFET State:</span>
+                  <span className={`text-xs font-bold px-2.5 py-0.5 rounded-full flex items-center gap-1 shadow-2xs border ${
+                    bmsData.chargeDischargeActive 
+                      ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
+                      : 'bg-red-50 text-red-700 border-red-200'
+                  }`}>
+                    {bmsData.chargeDischargeActive ? (
+                      <>
+                        <Zap size={12} className="text-emerald-600 fill-emerald-600" />
+                        <span>Charge & Discharge: ON</span>
+                      </>
+                    ) : (
+                      <>
+                        <Lock size={12} className="text-red-600" />
+                        <span>Charge & Discharge: OFF</span>
+                      </>
+                    )}
+                  </span>
+                </div>
+
                 <SwipeAction 
-                  label={bmsData.isLocked ? "Swipe to Unlock" : "Swipe to Lock"}
-                  icon={bmsData.isLocked ? Lock : Unlock}
-                  active={bmsData.isLocked}
+                  label={bmsData.chargeDischargeActive ? "Swipe to turn Charge/Discharge OFF" : "Swipe to turn Charge/Discharge ON"}
+                  icon={bmsData.chargeDischargeActive ? Lock : Unlock}
+                  active={!bmsData.chargeDischargeActive}
                   onAction={toggleAntiTheft}
                 />
               </div>
@@ -620,19 +635,121 @@ export default function App() {
 
                   <div className="bg-white rounded-3xl p-6 shadow-[0_8px_30px_rgba(0,0,0,0.04)]">
                     <div className="flex items-center gap-4 mb-6">
+                      <div className="w-12 h-12 rounded-2xl bg-purple-50 text-purple-600 flex items-center justify-center">
+                        <Map size={24} />
+                      </div>
+                      <div>
+                        <h3 className="text-base font-bold text-gray-900">Range Calculation Settings</h3>
+                        <p className="text-xs font-medium text-gray-400">Volt aur offset ke according range configure karein</p>
+                      </div>
+                    </div>
+
+                    <div className="px-2 pt-2 space-y-4">
+                      {/* Mode Selection */}
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <label className="text-sm font-bold text-gray-900 block">Calculation Method</label>
+                          <span className="text-[11px] text-gray-400">Select range calculation basis</span>
+                        </div>
+                        <div className="flex bg-gray-100 p-1 rounded-xl">
+                          <button
+                            onClick={() => setRangeCalcMode('voltage')}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                              bmsData.rangeCalcMode === 'voltage' ? 'bg-white text-purple-600 shadow-sm' : 'text-gray-500'
+                            }`}
+                          >
+                            By Voltage
+                          </button>
+                          <button
+                            onClick={() => setRangeCalcMode('soc')}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                              bmsData.rangeCalcMode === 'soc' ? 'bg-white text-purple-600 shadow-sm' : 'text-gray-500'
+                            }`}
+                          >
+                            By SOC %
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Plus/Minus Range Offset (+/- KM) */}
+                      <div className="flex items-center justify-between pt-3 border-t border-gray-100">
+                        <div>
+                          <label className="text-sm font-bold text-gray-900 block">Range Plus/Minus (+/- km)</label>
+                          <span className="text-[11px] text-gray-400">Voltage range me km add/subtract karein</span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <button 
+                            onClick={() => setRangeOffsetKM(bmsData.rangeOffsetKM - 1)}
+                            className="w-8 h-8 rounded-lg bg-gray-100 font-bold text-gray-700 active:bg-gray-200 flex items-center justify-center"
+                          >
+                            -
+                          </button>
+                          <input 
+                            type="number" 
+                            value={bmsData.rangeOffsetKM}
+                            onChange={(e) => setRangeOffsetKM(Number(e.target.value))}
+                            className="w-16 px-1 py-1.5 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 font-bold text-center text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                          />
+                          <button 
+                            onClick={() => setRangeOffsetKM(bmsData.rangeOffsetKM + 1)}
+                            className="w-8 h-8 rounded-lg bg-gray-100 font-bold text-gray-700 active:bg-gray-200 flex items-center justify-center"
+                          >
+                            +
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Km per Volt multiplier */}
+                      {bmsData.rangeCalcMode === 'voltage' && (
+                        <div className="flex items-center justify-between pt-3 border-t border-gray-100">
+                          <div>
+                            <label className="text-sm font-bold text-gray-900 block">Km per Volt Multiplier</label>
+                            <span className="text-[11px] text-gray-400">Volts above cutoff x multiplier</span>
+                          </div>
+                          <input 
+                            type="number" 
+                            step="0.1"
+                            min="0.1"
+                            max="10"
+                            value={bmsData.rangePerVolt}
+                            onChange={(e) => setRangePerVolt(Number(e.target.value))}
+                            className="w-24 px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 font-bold text-right focus:outline-none focus:ring-2 focus:ring-purple-500"
+                          />
+                        </div>
+                      )}
+
+                      {/* Full charge max range */}
+                      <div className="flex items-center justify-between pt-3 border-t border-gray-100">
+                        <div>
+                          <label className="text-sm font-bold text-gray-900 block">Max Range @ 100% (km)</label>
+                          <span className="text-[11px] text-gray-400">Base full charge distance</span>
+                        </div>
+                        <input 
+                          type="number" 
+                          step="1"
+                          value={bmsData.maxRangeKM}
+                          onChange={(e) => setMaxRange(Number(e.target.value))}
+                          className="w-24 px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 font-bold text-right focus:outline-none focus:ring-2 focus:ring-purple-500"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="bg-white rounded-3xl p-6 shadow-[0_8px_30px_rgba(0,0,0,0.04)]">
+                    <div className="flex items-center gap-4 mb-6">
                       <div className="w-12 h-12 rounded-2xl bg-teal-50 text-teal-500 flex items-center justify-center">
                         <Zap size={24} />
                       </div>
                       <div>
                         <h3 className="text-base font-bold text-gray-900">Voltage Calibration</h3>
-                        <p className="text-xs font-medium text-gray-400">Map 0-100% to actual volts</p>
+                        <p className="text-xs font-medium text-gray-400">Map 0-100% to actual pack volts</p>
                       </div>
                     </div>
 
                     <div className="px-2 pt-2 space-y-4">
                       <div className="flex items-center justify-between">
                         <label className="text-sm font-bold text-gray-900">
-                          Min Voltage (0%)
+                          Min Voltage Cutoff (0%)
                         </label>
                         <input 
                           type="number" 
@@ -645,7 +762,7 @@ export default function App() {
                       
                       <div className="flex items-center justify-between">
                         <label className="text-sm font-bold text-gray-900">
-                          Max Voltage (100%)
+                          Max Voltage Full (100%)
                         </label>
                         <input 
                           type="number" 

@@ -172,6 +172,31 @@ export class VoltageSmoother {
   }
 }
 
+// Range Calculation Engine (Voltage / SOC based + Plus/Minus Modifier)
+export const computeDynamicRange = (
+  voltage: number,
+  soc: number,
+  mode: 'voltage' | 'soc',
+  maxRangeKM: number,
+  offsetKM: number,
+  perVolt: number,
+  minV: number,
+  maxV: number
+): number => {
+  let baseKM = 0;
+  if (mode === 'voltage') {
+    if (voltage > 0) {
+      baseKM = Math.max(0, (voltage - minV) * perVolt);
+    } else {
+      baseKM = 0;
+    }
+  } else {
+    baseKM = (soc / 100) * maxRangeKM;
+  }
+  const total = Math.max(0, baseKM + offsetKM);
+  return Number(total.toFixed(1));
+};
+
 const INITIAL_DATA: BMSData = {
   voltage: 0.0,
   current: 0.0,
@@ -187,6 +212,7 @@ const INITIAL_DATA: BMSData = {
   efficiencyWhPerKm: 22,
   thermalState: 'Normal',
   isLocked: false,
+  chargeDischargeActive: true,
   alerts: [],
   timeToFullChargeMinutes: null,
   chargeLimit: 100,
@@ -195,6 +221,9 @@ const INITIAL_DATA: BMSData = {
   maxRangeKM: 70,
   minVoltage: 40,
   maxVoltage: 84,
+  rangeCalcMode: 'voltage',
+  rangeOffsetKM: 0,
+  rangePerVolt: 1.6,
   errorLogs: [],
   rawHexLogs: [],
   autoPollEnabled: true,
@@ -260,7 +289,16 @@ export function useBMS() {
         const smoothedV = Number(smootherRef.current.getSmoothedVoltage(rawVolts).toFixed(2));
         const capacityAH = (rawSoc / 100) * prev.nominalCapacityAH;
         const power = Number((smoothedV * rawCurr).toFixed(1));
-        const estRange = (rawSoc / 100) * prev.maxRangeKM;
+        const estRange = computeDynamicRange(
+          smoothedV,
+          rawSoc,
+          prev.rangeCalcMode,
+          prev.maxRangeKM,
+          prev.rangeOffsetKM,
+          prev.rangePerVolt,
+          prev.minVoltage,
+          prev.maxVoltage
+        );
 
         let status: BMSData['status'] = 'Normal';
         if (rawCurr > 0.5) status = 'Charging';
@@ -274,7 +312,7 @@ export function useBMS() {
           remainingCapacityAH: capacityAH,
           power,
           status,
-          estimatedRangeKM: Number(estRange.toFixed(1)),
+          estimatedRangeKM: estRange,
           detectedProtocol: 'Daly'
         };
       });
@@ -426,7 +464,16 @@ export function useBMS() {
 
       setBmsData(prev => {
         const smoothedV = Number(smootherRef.current.getSmoothedVoltage(rawVolts).toFixed(2));
-        const estRange = (rawSoc / 100) * prev.maxRangeKM;
+        const estRange = computeDynamicRange(
+          smoothedV,
+          rawSoc,
+          prev.rangeCalcMode,
+          prev.maxRangeKM,
+          prev.rangeOffsetKM,
+          prev.rangePerVolt,
+          prev.minVoltage,
+          prev.maxVoltage
+        );
         const power = Number((smoothedV * rawCurr).toFixed(1));
 
         let currentStatus: BMSData['status'] = 'Normal';
@@ -453,7 +500,7 @@ export function useBMS() {
           thermalState: finalTemp > 55 ? 'Critical' : finalTemp > 42 ? 'Throttled' : 'Normal',
           power,
           status: currentStatus,
-          estimatedRangeKM: Number(estRange.toFixed(1)),
+          estimatedRangeKM: estRange,
           cells: updatedCells,
           detectedProtocol: 'JBD/Xiaoxiang'
         };
@@ -584,6 +631,18 @@ export function useBMS() {
     setBmsData(prev => {
       const smoothedV = parsedV > 0 ? Number(smootherRef.current.getSmoothedVoltage(parsedV).toFixed(2)) : prev.voltage;
       const power = Number((smoothedV * parsedI).toFixed(1));
+      const activeSoc = parsedSoc > 0 && parsedSoc <= 100 ? parsedSoc : prev.capacityPercent;
+      const estRange = computeDynamicRange(
+        smoothedV,
+        activeSoc,
+        prev.rangeCalcMode,
+        prev.maxRangeKM,
+        prev.rangeOffsetKM,
+        prev.rangePerVolt,
+        prev.minVoltage,
+        prev.maxVoltage
+      );
+
       let currentStatus: BMSData['status'] = 'Normal';
       if (parsedI > 0.5) currentStatus = 'Charging';
       else if (parsedI < -0.5) currentStatus = 'Discharging';
@@ -592,12 +651,13 @@ export function useBMS() {
         ...prev,
         voltage: smoothedV,
         current: parsedI,
-        capacityPercent: parsedSoc > 0 && parsedSoc <= 100 ? parsedSoc : prev.capacityPercent,
+        capacityPercent: activeSoc,
         temperature: parsedTemp !== 0 ? parsedTemp : prev.temperature,
         cycleCount: parsedCycles > 0 ? parsedCycles : prev.cycleCount,
         cells: parsedCells.length > 0 ? parsedCells : prev.cells,
         power,
         status: currentStatus,
+        estimatedRangeKM: estRange,
         detectedProtocol: 'JK BMS'
       };
     });
@@ -611,12 +671,26 @@ export function useBMS() {
       const soc = dataView.getUint8(8);
       addHexLog('RX', rawHex, `ANT BMS -> Volts: ${packV}V, SOC: ${soc}%`);
 
-      setBmsData(prev => ({
-        ...prev,
-        voltage: Number(smootherRef.current.getSmoothedVoltage(packV).toFixed(2)),
-        capacityPercent: soc,
-        detectedProtocol: 'ANT BMS'
-      }));
+      setBmsData(prev => {
+        const smoothedV = Number(smootherRef.current.getSmoothedVoltage(packV).toFixed(2));
+        const estRange = computeDynamicRange(
+          smoothedV,
+          soc,
+          prev.rangeCalcMode,
+          prev.maxRangeKM,
+          prev.rangeOffsetKM,
+          prev.rangePerVolt,
+          prev.minVoltage,
+          prev.maxVoltage
+        );
+        return {
+          ...prev,
+          voltage: smoothedV,
+          capacityPercent: soc,
+          estimatedRangeKM: estRange,
+          detectedProtocol: 'ANT BMS'
+        };
+      });
     }
   }, [addHexLog]);
 
@@ -1160,8 +1234,17 @@ export function useBMS() {
   }, []);
 
   const toggleAntiTheft = useCallback(() => {
-    setBmsData(prev => ({ ...prev, isLocked: !prev.isLocked }));
-  }, []);
+    setBmsData(prev => {
+      const nextLocked = !prev.isLocked;
+      const nextMosfetOn = !nextLocked;
+      addHexLog('SYS', 'MOSFET_STATE', `Charge & Discharge MOSFET output set to: ${nextMosfetOn ? 'ON (Active)' : 'OFF (Locked)'}`);
+      return {
+        ...prev,
+        isLocked: nextLocked,
+        chargeDischargeActive: nextMosfetOn
+      };
+    });
+  }, [addHexLog]);
 
   const setChargeLimit = useCallback((limit: number) => {
     setBmsData(prev => ({ ...prev, chargeLimit: limit }));
@@ -1171,16 +1254,100 @@ export function useBMS() {
     setBmsData(prev => ({ ...prev, reserveBuffer: buffer }));
   }, []);
 
+  const setRangeCalcMode = useCallback((mode: 'voltage' | 'soc') => {
+    setBmsData(prev => {
+      const newRange = computeDynamicRange(
+        prev.voltage,
+        prev.capacityPercent,
+        mode,
+        prev.maxRangeKM,
+        prev.rangeOffsetKM,
+        prev.rangePerVolt,
+        prev.minVoltage,
+        prev.maxVoltage
+      );
+      return { ...prev, rangeCalcMode: mode, estimatedRangeKM: newRange };
+    });
+  }, []);
+
+  const setRangeOffsetKM = useCallback((offset: number) => {
+    setBmsData(prev => {
+      const newRange = computeDynamicRange(
+        prev.voltage,
+        prev.capacityPercent,
+        prev.rangeCalcMode,
+        prev.maxRangeKM,
+        offset,
+        prev.rangePerVolt,
+        prev.minVoltage,
+        prev.maxVoltage
+      );
+      return { ...prev, rangeOffsetKM: offset, estimatedRangeKM: newRange };
+    });
+  }, []);
+
+  const setRangePerVolt = useCallback((perVolt: number) => {
+    setBmsData(prev => {
+      const newRange = computeDynamicRange(
+        prev.voltage,
+        prev.capacityPercent,
+        prev.rangeCalcMode,
+        prev.maxRangeKM,
+        prev.rangeOffsetKM,
+        perVolt,
+        prev.minVoltage,
+        prev.maxVoltage
+      );
+      return { ...prev, rangePerVolt: perVolt, estimatedRangeKM: newRange };
+    });
+  }, []);
+
   const setMaxRange = useCallback((range: number) => {
-    setBmsData(prev => ({ ...prev, maxRangeKM: range }));
+    setBmsData(prev => {
+      const newRange = computeDynamicRange(
+        prev.voltage,
+        prev.capacityPercent,
+        prev.rangeCalcMode,
+        range,
+        prev.rangeOffsetKM,
+        prev.rangePerVolt,
+        prev.minVoltage,
+        prev.maxVoltage
+      );
+      return { ...prev, maxRangeKM: range, estimatedRangeKM: newRange };
+    });
   }, []);
 
   const setMinVoltage = useCallback((voltage: number) => {
-    setBmsData(prev => ({ ...prev, minVoltage: voltage }));
+    setBmsData(prev => {
+      const newRange = computeDynamicRange(
+        prev.voltage,
+        prev.capacityPercent,
+        prev.rangeCalcMode,
+        prev.maxRangeKM,
+        prev.rangeOffsetKM,
+        prev.rangePerVolt,
+        voltage,
+        prev.maxVoltage
+      );
+      return { ...prev, minVoltage: voltage, estimatedRangeKM: newRange };
+    });
   }, []);
 
   const setMaxVoltage = useCallback((voltage: number) => {
-    setBmsData(prev => ({ ...prev, maxVoltage: voltage }));
+    setBmsData(prev => {
+      const newRange = computeDynamicRange(
+        prev.voltage,
+        prev.capacityPercent,
+        prev.rangeCalcMode,
+        prev.maxRangeKM,
+        prev.rangeOffsetKM,
+        prev.rangePerVolt,
+        prev.minVoltage,
+        voltage
+      );
+      return { ...prev, maxVoltage: voltage, estimatedRangeKM: newRange };
+    });
   }, []);
 
   return {
@@ -1200,6 +1367,9 @@ export function useBMS() {
     toggleAntiTheft,
     setChargeLimit,
     setReserveBuffer,
+    setRangeCalcMode,
+    setRangeOffsetKM,
+    setRangePerVolt,
     setMaxRange,
     setMinVoltage,
     setMaxVoltage
