@@ -1403,26 +1403,67 @@ export function useBMS() {
       let selectedWriteChar: BluetoothRemoteGATTCharacteristic | null = null;
       let matchedServiceUUID = '';
 
-      // SMART GATT SERVICE MATCHING ALGORITHM across all discovered services
+      // SMART GATT SERVICE MATCHING ALGORITHM
+      const genericServices = ['1800', '1801', '180a', '180f'];
+      const prioritizedServices = ['ffe0', 'ff00', 'e7e0', 'fee0'];
+      
+      let discoveredNotify: BluetoothRemoteGATTCharacteristic[] = [];
+      let discoveredWrite: BluetoothRemoteGATTCharacteristic[] = [];
+
       for (const service of services) {
         const serviceUuid = service.uuid.toLowerCase();
+        // Skip standard generic GATT services to avoid picking up 0x2A00 or 0x2A05
+        const isGeneric = genericServices.some(gs => serviceUuid.startsWith(`0000${gs}`));
+        if (isGeneric) {
+          addHexLog('SYS', 'SKIP', `Skipping generic service ${serviceUuid.substring(0, 8)}`);
+          continue;
+        }
+
         try {
           const chars = await service.getCharacteristics();
           for (const char of chars) {
             const props = char.properties;
             addHexLog('SYS', 'CHAR_DISCOVERED', `Service ${serviceUuid.substring(0, 8)}... -> Char ${char.uuid.substring(0, 8)}... (Notify: ${props.notify || props.indicate}, Write: ${props.write || props.writeWithoutResponse})`);
 
-            if ((props.notify || props.indicate) && !selectedNotifyChar) {
-              selectedNotifyChar = char;
-              matchedServiceUUID = service.uuid;
+            if (props.notify || props.indicate) {
+              discoveredNotify.push(char);
             }
-            if ((props.write || props.writeWithoutResponse) && !selectedWriteChar) {
-              selectedWriteChar = char;
+            if (props.write || props.writeWithoutResponse) {
+              discoveredWrite.push(char);
             }
           }
         } catch (e) {
           console.warn(`Could not inspect service ${serviceUuid}:`, e);
         }
+      }
+
+      // Priority matching: Try to find characteristics in prioritized services first
+      for (const pref of prioritizedServices) {
+        if (!selectedNotifyChar) {
+          // Prefer ffe1 for notify if available
+          const match = discoveredNotify.find(c => c.service.uuid.toLowerCase().includes(pref) && c.uuid.toLowerCase().includes('ffe1')) 
+                     || discoveredNotify.find(c => c.service.uuid.toLowerCase().includes(pref));
+          if (match) {
+            selectedNotifyChar = match;
+            matchedServiceUUID = match.service.uuid;
+          }
+        }
+        if (!selectedWriteChar) {
+          // Prefer ffe2 for write if available, fallback to ffe1
+          const match = discoveredWrite.find(c => c.service.uuid.toLowerCase().includes(pref) && c.uuid.toLowerCase().includes('ffe2'))
+                     || discoveredWrite.find(c => c.service.uuid.toLowerCase().includes(pref) && c.uuid.toLowerCase().includes('ffe1'))
+                     || discoveredWrite.find(c => c.service.uuid.toLowerCase().includes(pref));
+          if (match) selectedWriteChar = match;
+        }
+      }
+
+      // Fallback: Pick the first available if no priority match found
+      if (!selectedNotifyChar && discoveredNotify.length > 0) {
+        selectedNotifyChar = discoveredNotify[0];
+        matchedServiceUUID = selectedNotifyChar.service.uuid;
+      }
+      if (!selectedWriteChar && discoveredWrite.length > 0) {
+        selectedWriteChar = discoveredWrite[0];
       }
 
       if (!selectedNotifyChar) {
