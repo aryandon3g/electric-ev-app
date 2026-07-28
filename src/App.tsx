@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useBMS, BMS_PRESET_COMMANDS } from './hooks/useBMS';
+import { useBMS, BMS_PRESET_COMMANDS, BATTERY_PRESETS } from './hooks/useBMS';
 import { motion, useMotionValue } from 'motion/react';
 import { LiveProgressBar } from './components/LiveProgressBar';
 import { 
@@ -250,7 +250,7 @@ export default function App() {
     bmsData, connectBluetooth, disconnect, isConnected, isConnecting, error, deviceName,
     toggleAntiTheft, setChargeLimit, setReserveBuffer, setMinVoltage, setMaxVoltage,
     setRangeCalcMode, setRangeOffsetKM, setRangePerVolt, setMaxRange,
-    setManualProtocol, triggerPollNow, simulateIncomingPacket, clearHexLogs
+    setManualProtocol, triggerPollNow, simulateIncomingPacket, clearHexLogs, applyBatteryPreset
   } = useBMS();
 
   const [activeTab, setActiveTab] = useState<'dashboard' | 'diagnostics' | 'controls'>('dashboard');
@@ -846,6 +846,42 @@ export default function App() {
                           className="w-24 px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 font-bold text-right focus:outline-none focus:ring-2 focus:ring-purple-500"
                         />
                       </div>
+                    </div>
+                  </div>
+
+                  <div className="bg-white rounded-3xl p-6 shadow-[0_8px_30px_rgba(0,0,0,0.04)]">
+                    <div className="flex items-center gap-4 mb-4">
+                      <div className="w-12 h-12 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center">
+                        <Battery size={24} />
+                      </div>
+                      <div>
+                        <h3 className="text-base font-bold text-gray-900">Battery Pack Profiles</h3>
+                        <p className="text-xs font-medium text-gray-400">1-tap calibration for scooter model</p>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-2 pt-2">
+                      {Object.entries(BATTERY_PRESETS).map(([key, preset]) => (
+                        <button
+                          key={key}
+                          onClick={() => applyBatteryPreset(key as any)}
+                          className={`p-3 rounded-2xl text-left border transition-all flex items-center justify-between ${
+                            bmsData.minVoltage === preset.minVoltage && bmsData.maxVoltage === preset.maxVoltage
+                              ? 'bg-amber-50 border-amber-300 ring-2 ring-amber-400/20'
+                              : 'bg-gray-50 border-gray-200 hover:bg-gray-100'
+                          }`}
+                        >
+                          <div>
+                            <div className="text-xs font-bold text-gray-900">{preset.name}</div>
+                            <div className="text-[11px] font-medium text-gray-500">
+                              Range: {preset.minVoltage}V - {preset.maxVoltage}V | Max {preset.maxRangeKM}km
+                            </div>
+                          </div>
+                          <span className="text-[10px] font-bold bg-white px-2 py-1 rounded-lg shadow-sm border border-gray-200 text-amber-700">
+                            Apply
+                          </span>
+                        </button>
+                      ))}
                     </div>
                   </div>
 

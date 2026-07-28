@@ -228,6 +228,44 @@ export const computeDynamicRange = (
   return Number(total.toFixed(1));
 };
 
+export const BATTERY_PRESETS = {
+  '60V_16S_NMC': {
+    name: '60V 16S Li-ion / NMC (Okinawa Praise / Ampere)',
+    minVoltage: 48.0,
+    maxVoltage: 67.2,
+    maxRangeKM: 80,
+    rangePerVolt: 2.0
+  },
+  '72V_20S_NMC': {
+    name: '72V 20S Li-ion / NMC (Okinawa i-Praise / High Speed)',
+    minVoltage: 58.0,
+    maxVoltage: 84.0,
+    maxRangeKM: 100,
+    rangePerVolt: 1.8
+  },
+  '48V_13S_NMC': {
+    name: '48V 13S Li-ion / NMC (Standard E-Scooter / Bicycle)',
+    minVoltage: 39.0,
+    maxVoltage: 54.6,
+    maxRangeKM: 55,
+    rangePerVolt: 2.5
+  },
+  '60V_20S_LFP': {
+    name: '60V 20S LiFePO4 (LFP Smart Pack)',
+    minVoltage: 52.0,
+    maxVoltage: 73.0,
+    maxRangeKM: 75,
+    rangePerVolt: 2.2
+  },
+  '72V_24S_LFP': {
+    name: '72V 24S LiFePO4 (LFP High Capacity)',
+    minVoltage: 62.4,
+    maxVoltage: 87.6,
+    maxRangeKM: 110,
+    rangePerVolt: 2.0
+  }
+};
+
 const INITIAL_DATA: BMSData = {
   voltage: 0.0,
   current: 0.0,
@@ -607,7 +645,7 @@ export function useBMS() {
                   id: cellNo || (i + 1),
                   voltage: cellV,
                   isBalancing: false,
-                  healthStatus: cellV < 2.9 || cellV > 4.25 ? 'Warning' : 'Good'
+                  healthStatus: cellV < 2.8 || cellV > 4.25 ? 'Warning' : 'Good'
                 });
               }
               offset += 3;
@@ -617,7 +655,7 @@ export function useBMS() {
           if (offset + 1 < dataView.byteLength) {
             const rawT = (dataView.getUint8(offset) << 8) | dataView.getUint8(offset + 1);
             let tempVal = rawT > 32767 ? rawT - 65536 : rawT;
-            if (tempVal > 100) tempVal = tempVal - 100;
+            if (tempVal > 100) tempVal = 100 - tempVal;
             if (tempVal > -40 && tempVal < 120) {
               parsedTemp = tempVal;
             }
@@ -632,9 +670,11 @@ export function useBMS() {
           if (offset + 1 < dataView.byteLength) {
             const rawI = (dataView.getUint8(offset) << 8) | dataView.getUint8(offset + 1);
             if (rawI & 0x8000) {
-              parsedI = -((rawI & 0x7FFF) / 100);
+              // Bit 15 set = CHARGING (Positive current in A)
+              parsedI = (rawI & 0x7FFF) / 100;
             } else {
-              parsedI = (rawI > 32767 ? rawI - 65536 : rawI) / 100;
+              // Bit 15 clear = DISCHARGING (Negative current in A)
+              parsedI = -((rawI & 0x7FFF) / 100);
             }
             offset += 2;
           }
@@ -648,31 +688,39 @@ export function useBMS() {
             parsedCycles = (dataView.getUint8(offset) << 8) | dataView.getUint8(offset + 1);
             offset += 2;
           }
-        } else if (tag === 0x86 || tag === 0xA3 || tag === 0xA4 || tag === 0xC0) {
+        } else if (
+          tag === 0x85 || tag === 0x86 || tag === 0xA2 || tag === 0xA3 || 
+          tag === 0xA4 || tag === 0xA5 || tag === 0xB9 || tag === 0xC0
+        ) {
           offset += 1; // 1-byte tags
         } else if (
+          tag === 0x80 || tag === 0x81 || tag === 0x82 || tag === 0x83 || 
+          tag === 0x84 || tag === 0x87 || tag === 0x8A || tag === 0x8B || 
           tag === 0x8C || tag === 0x8E || tag === 0x8F || tag === 0x90 || 
           tag === 0x91 || tag === 0x92 || tag === 0x93 || tag === 0x94 || 
           tag === 0x95 || tag === 0x96 || tag === 0x97 || tag === 0x98 || 
           tag === 0x99 || tag === 0x9A || tag === 0x9B || tag === 0x9C || 
-          tag === 0x9D || tag === 0x9E || tag === 0x9F || (tag >= 0xB0 && tag <= 0xB3)
+          tag === 0x9D || tag === 0x9E || tag === 0x9F || tag === 0xA0 || 
+          tag === 0xA1 || (tag >= 0xB0 && tag <= 0xB3)
         ) {
           offset += 2; // 2-byte tags
         } else if (
-          tag === 0x88 || tag === 0x89 || tag === 0x8A || tag === 0x8B || 
-          tag === 0xA0 || tag === 0xA1 || tag === 0xA2 || tag === 0xA5 || 
-          tag === 0xAA || tag === 0xAB || tag === 0xAC || tag === 0xB4 || 
-          tag === 0xB5 || tag === 0xB8
+          tag === 0x88 || tag === 0x89 || tag === 0xAA || tag === 0xAB || 
+          tag === 0xAC || tag === 0xB4 || tag === 0xB5 || tag === 0xB8
         ) {
           offset += 4; // 4-byte tags
-        } else if (tag === 0xA6 || tag === 0xA7 || tag === 0xA8 || tag === 0xA9 || tag === 0xB6 || tag === 0xB7) {
+        } else if (
+          tag === 0xA6 || tag === 0xA7 || tag === 0xA8 || tag === 0xA9 || 
+          tag === 0xAD || tag === 0xAE || tag === 0xAF || tag === 0xB6 || 
+          tag === 0xB7
+        ) {
           offset += 16; // 16-byte string tags
         } else {
           offset += 2; // Default safe advance
         }
       }
     } else if ((h0 === 0xAA && h1 === 0x55) || (h0 === 0x55 && h1 === 0xAA)) {
-      // JK02 / JK04 / Bike BMS frame parsing
+      // JK02 / JK04 / Okinawa BMS frame parsing
       if (dataView.byteLength >= 10) {
         const rawVolts = ((dataView.getUint8(4) << 8) | dataView.getUint8(5)) / 100;
         if (rawVolts >= 10 && rawVolts <= 150) {
@@ -680,7 +728,11 @@ export function useBMS() {
         }
         if (dataView.byteLength >= 8) {
           const rawI = (dataView.getUint8(6) << 8) | dataView.getUint8(7);
-          parsedI = (rawI > 32767 ? rawI - 65536 : rawI) / 100;
+          if (rawI & 0x8000) {
+            parsedI = (rawI & 0x7FFF) / 100;
+          } else {
+            parsedI = -((rawI & 0x7FFF) / 100);
+          }
         }
         if (dataView.byteLength >= 9) {
           const socVal = dataView.getUint8(8);
@@ -690,9 +742,26 @@ export function useBMS() {
         }
         if (dataView.byteLength >= 11) {
           const rawT = (dataView.getUint8(9) << 8) | dataView.getUint8(10);
-          const tVal = rawT > 32767 ? rawT - 65536 : rawT;
+          let tVal = rawT > 32767 ? rawT - 65536 : rawT;
+          if (tVal > 100) tVal = 100 - tVal;
           if (tVal > -40 && tVal < 120) {
             parsedTemp = tVal;
+          }
+        }
+
+        if (dataView.byteLength >= 16) {
+          let cellIdx = 1;
+          for (let offset = 12; offset + 1 < dataView.byteLength && cellIdx <= 32; offset += 2) {
+            const cellVal = ((dataView.getUint8(offset) << 8) | dataView.getUint8(offset + 1)) / 1000;
+            if (cellVal >= 2.0 && cellVal <= 4.5) {
+              parsedCells.push({
+                id: cellIdx,
+                voltage: cellVal,
+                isBalancing: false,
+                healthStatus: cellVal < 2.8 || cellVal > 4.25 ? 'Warning' : 'Good'
+              });
+              cellIdx++;
+            }
           }
         }
       }
@@ -714,28 +783,34 @@ export function useBMS() {
           }
         } else if (tag === 0x84 && i + 2 < dataView.byteLength && parsedI === 0) {
           const rawI = (dataView.getUint8(i + 1) << 8) | dataView.getUint8(i + 2);
-          const testI = (rawI > 32767 ? rawI - 65536 : rawI) / 100;
-          if (Math.abs(testI) < 300) {
-            parsedI = testI;
+          if (rawI & 0x8000) {
+            parsedI = (rawI & 0x7FFF) / 100;
+          } else {
+            parsedI = -((rawI & 0x7FFF) / 100);
           }
         }
       }
     }
 
-    // Fallback 1: If cells were parsed, compute total pack voltage from sum of cell voltages
-    if (parsedV === 0 && parsedCells.length > 0) {
-      const sumV = parsedCells.reduce((acc, c) => acc + c.voltage, 0);
-      if (sumV > 0) {
-        parsedV = Number(sumV.toFixed(2));
-      }
+    // High Precision Cell Voltage Sum Validation:
+    // Cell ADCs in JK BMS provide 1mV precision per cell. If cell voltages are parsed,
+    // compute sum of cells and compare with total pack voltage. If parsedV is 0 or differs significantly,
+    // use the exact sum of cell voltages!
+    let sumCellsV = 0;
+    if (parsedCells.length > 0) {
+      sumCellsV = Number(parsedCells.reduce((acc, c) => acc + c.voltage, 0).toFixed(2));
+    }
+
+    if (sumCellsV > 0 && (parsedV === 0 || Math.abs(parsedV - sumCellsV) > 3.0)) {
+      parsedV = sumCellsV;
     }
 
     setBmsData(prev => {
       const smoothedV = parsedV > 0 ? Number(smootherRef.current.getSmoothedVoltage(parsedV).toFixed(2)) : prev.voltage;
       
-      // Fallback 2: Calculate SOC from voltage if raw SOC is missing/0
+      // Fallback 2: Calculate SOC from voltage if raw SOC is missing/0 or out of bounds
       let activeSoc = parsedSoc > 0 && parsedSoc <= 100 ? parsedSoc : prev.capacityPercent;
-      if (activeSoc === 0 && smoothedV > prev.minVoltage && prev.maxVoltage > prev.minVoltage) {
+      if ((activeSoc <= 0 || activeSoc > 100) && smoothedV > prev.minVoltage && prev.maxVoltage > prev.minVoltage) {
         activeSoc = Math.min(100, Math.max(0, Math.round(((smoothedV - prev.minVoltage) / (prev.maxVoltage - prev.minVoltage)) * 100)));
       }
 
@@ -947,15 +1022,8 @@ export function useBMS() {
             buffer = buffer.slice(expectedLen);
             rxBufferRef.current = buffer;
             continue;
-          } else if (buffer.length >= 250) {
-            const frame = buffer.slice(0, buffer.length);
-            const dataView = new DataView(new Uint8Array(frame).buffer);
-            parseJkFrame(dataView);
-            buffer = [];
-            rxBufferRef.current = buffer;
-            break;
           } else {
-            break; // Wait for remaining BLE packets
+            break; // Wait for remaining BLE MTU packets to arrive
           }
         } else {
           break;
@@ -1559,6 +1627,32 @@ export function useBMS() {
     });
   }, []);
 
+  const applyBatteryPreset = useCallback((presetKey: keyof typeof BATTERY_PRESETS) => {
+    const preset = BATTERY_PRESETS[presetKey];
+    if (!preset) return;
+    setBmsData(prev => {
+      const newRange = computeDynamicRange(
+        prev.voltage,
+        prev.capacityPercent,
+        prev.rangeCalcMode,
+        preset.maxRangeKM,
+        prev.rangeOffsetKM,
+        preset.rangePerVolt,
+        preset.minVoltage,
+        preset.maxVoltage
+      );
+      return {
+        ...prev,
+        minVoltage: preset.minVoltage,
+        maxVoltage: preset.maxVoltage,
+        maxRangeKM: preset.maxRangeKM,
+        rangePerVolt: preset.rangePerVolt,
+        estimatedRangeKM: newRange
+      };
+    });
+    addHexLog('SYS', 'PRESET_APPLIED', `Applied Battery Profile: ${preset.name} (${preset.minVoltage}V - ${preset.maxVoltage}V)`);
+  }, [addHexLog]);
+
   return {
     isConnected,
     isConnecting,
@@ -1581,6 +1675,7 @@ export function useBMS() {
     setRangePerVolt,
     setMaxRange,
     setMinVoltage,
-    setMaxVoltage
+    setMaxVoltage,
+    applyBatteryPreset
   };
 }
