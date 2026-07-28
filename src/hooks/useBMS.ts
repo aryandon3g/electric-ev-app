@@ -635,21 +635,24 @@ export function useBMS() {
         if (tag === 0x79) { // Cell Voltages List
           if (offset < dataView.byteLength) {
             const len = dataView.getUint8(offset);
-            offset++;
-            const cellCount = Math.floor(len / 3);
-            for (let i = 0; i < cellCount && (offset + 2) < dataView.byteLength; i++) {
-              const cellNo = dataView.getUint8(offset);
-              const cellV = ((dataView.getUint8(offset + 1) << 8) | dataView.getUint8(offset + 2)) / 1000;
-              if (cellV > 0 && cellV < 5.5) {
+            const tagDataStart = offset + 1;
+            const tagDataEnd = Math.min(dataView.byteLength, tagDataStart + len);
+            
+            let cellIdx = 1;
+            for (let i = tagDataStart; i + 2 < tagDataEnd; i += 3) {
+              const cellNo = dataView.getUint8(i);
+              const cellV = ((dataView.getUint8(i + 1) << 8) | dataView.getUint8(i + 2)) / 1000;
+              if (cellV >= 1.5 && cellV <= 5.0) {
                 parsedCells.push({
-                  id: cellNo || (i + 1),
-                  voltage: cellV,
+                  id: (cellNo >= 1 && cellNo <= 32) ? cellNo : cellIdx,
+                  voltage: Number(cellV.toFixed(3)),
                   isBalancing: false,
                   healthStatus: cellV < 2.8 || cellV > 4.25 ? 'Warning' : 'Good'
                 });
+                cellIdx++;
               }
-              offset += 3;
             }
+            offset = tagDataEnd;
           }
         } else if (tag === 0x80 || tag === 0x81 || tag === 0x82) { // Temperatures
           if (offset + 1 < dataView.byteLength) {
@@ -689,34 +692,87 @@ export function useBMS() {
             offset += 2;
           }
         } else if (
-          tag === 0x85 || tag === 0x86 || tag === 0xA2 || tag === 0xA3 || 
-          tag === 0xA4 || tag === 0xA5 || tag === 0xB9 || tag === 0xC0
+          tag === 0x86 || tag === 0xA2 || tag === 0xA3 || 
+          tag === 0xA4 || tag === 0xA5 || tag === 0xA6 || tag === 0xB9 || tag === 0xC0
         ) {
           offset += 1; // 1-byte tags
         } else if (
-          tag === 0x80 || tag === 0x81 || tag === 0x82 || tag === 0x83 || 
-          tag === 0x84 || tag === 0x87 || tag === 0x8A || tag === 0x8B || 
-          tag === 0x8C || tag === 0x8E || tag === 0x8F || tag === 0x90 || 
-          tag === 0x91 || tag === 0x92 || tag === 0x93 || tag === 0x94 || 
-          tag === 0x95 || tag === 0x96 || tag === 0x97 || tag === 0x98 || 
-          tag === 0x99 || tag === 0x9A || tag === 0x9B || tag === 0x9C || 
-          tag === 0x9D || tag === 0x9E || tag === 0x9F || tag === 0xA0 || 
-          tag === 0xA1 || (tag >= 0xB0 && tag <= 0xB3)
+          tag === 0x8A || tag === 0x8B || tag === 0x8C || tag === 0x8E || 
+          tag === 0x8F || tag === 0x90 || tag === 0x91 || tag === 0x92 || 
+          tag === 0x93 || tag === 0x94 || tag === 0x95 || tag === 0x96 || 
+          tag === 0x97 || tag === 0x98 || tag === 0x99 || tag === 0x9A || 
+          tag === 0x9B || tag === 0x9C || tag === 0x9D || tag === 0x9E || 
+          tag === 0x9F || tag === 0xA0 || tag === 0xA1 || tag === 0xA7 || 
+          (tag >= 0xB0 && tag <= 0xB3) || tag === 0xB4
         ) {
           offset += 2; // 2-byte tags
         } else if (
-          tag === 0x88 || tag === 0x89 || tag === 0xAA || tag === 0xAB || 
-          tag === 0xAC || tag === 0xB4 || tag === 0xB5 || tag === 0xB8
+          tag === 0x88 || tag === 0x89 || tag === 0xA8 || tag === 0xA9 || 
+          tag === 0xAA || tag === 0xAB || tag === 0xAC || tag === 0xAD || 
+          tag === 0xB5 || tag === 0xB8
         ) {
           offset += 4; // 4-byte tags
         } else if (
-          tag === 0xA6 || tag === 0xA7 || tag === 0xA8 || tag === 0xA9 || 
-          tag === 0xAD || tag === 0xAE || tag === 0xAF || tag === 0xB6 || 
-          tag === 0xB7
+          tag === 0xAE || tag === 0xAF || tag === 0xB6 || tag === 0xB7 || tag === 0xBA
         ) {
           offset += 16; // 16-byte string tags
         } else {
-          offset += 2; // Default safe advance
+          offset += 1; // Safe 1-byte increment for unhandled tags
+        }
+      }
+
+      // DIRECT INDEPENDENT TAG SCANNER FOR 0x4E 0x57 CLASSIC FRAMES
+      if (dataView.byteLength >= 12) {
+        for (let i = 0; i < dataView.byteLength - 2; i++) {
+          const tag = dataView.getUint8(i);
+
+          if (tag === 0x79 && parsedCells.length === 0 && i + 2 < dataView.byteLength) {
+            const len = dataView.getUint8(i + 1);
+            const endIdx = Math.min(dataView.byteLength, i + 2 + len);
+            let cellIdx = 1;
+            for (let c = i + 2; c + 2 < endIdx; c += 3) {
+              const cNo = dataView.getUint8(c);
+              const cVal = ((dataView.getUint8(c + 1) << 8) | dataView.getUint8(c + 2)) / 1000;
+              if (cVal >= 1.5 && cVal <= 5.0) {
+                parsedCells.push({
+                  id: (cNo >= 1 && cNo <= 32) ? cNo : cellIdx,
+                  voltage: Number(cVal.toFixed(3)),
+                  isBalancing: false,
+                  healthStatus: cVal < 2.8 || cVal > 4.25 ? 'Warning' : 'Good'
+                });
+                cellIdx++;
+              }
+            }
+          } else if (tag === 0x83 && i + 2 < dataView.byteLength) {
+            const vVal = ((dataView.getUint8(i + 1) << 8) | dataView.getUint8(i + 2)) / 100;
+            if (vVal >= 10.0 && vVal <= 150.0) {
+              parsedV = vVal;
+            }
+          } else if (tag === 0x84 && i + 2 < dataView.byteLength && parsedI === 0) {
+            const rawI = (dataView.getUint8(i + 1) << 8) | dataView.getUint8(i + 2);
+            if (rawI & 0x8000) {
+              parsedI = (rawI & 0x7FFF) / 100;
+            } else {
+              parsedI = -((rawI & 0x7FFF) / 100);
+            }
+          } else if (tag === 0x85 && i + 1 < dataView.byteLength) {
+            const socVal = dataView.getUint8(i + 1);
+            if (socVal > 0 && socVal <= 100) {
+              parsedSoc = socVal;
+            }
+          } else if ((tag === 0x80 || tag === 0x81 || tag === 0x82) && parsedTemp === 0 && i + 2 < dataView.byteLength) {
+            const rawT = (dataView.getUint8(i + 1) << 8) | dataView.getUint8(i + 2);
+            let tVal = rawT > 32767 ? rawT - 65536 : rawT;
+            if (tVal > 100) tVal = 100 - tVal;
+            if (tVal > -40 && tVal < 120) {
+              parsedTemp = tVal;
+            }
+          } else if (tag === 0x87 && parsedCycles === 0 && i + 2 < dataView.byteLength) {
+            const cVal = (dataView.getUint8(i + 1) << 8) | dataView.getUint8(i + 2);
+            if (cVal > 0 && cVal < 10000) {
+              parsedCycles = cVal;
+            }
+          }
         }
       }
     } else if ((h0 === 0xAA && h1 === 0x55) || (h0 === 0x55 && h1 === 0xAA)) {
@@ -749,44 +805,31 @@ export function useBMS() {
           }
         }
 
+        // Auto-detect cell array start index in JK02 frame (scan offset 10..16)
         if (dataView.byteLength >= 16) {
-          let cellIdx = 1;
-          for (let offset = 12; offset + 1 < dataView.byteLength && cellIdx <= 32; offset += 2) {
-            const cellVal = ((dataView.getUint8(offset) << 8) | dataView.getUint8(offset + 1)) / 1000;
-            if (cellVal >= 2.0 && cellVal <= 4.5) {
-              parsedCells.push({
-                id: cellIdx,
-                voltage: cellVal,
-                isBalancing: false,
-                healthStatus: cellVal < 2.8 || cellVal > 4.25 ? 'Warning' : 'Good'
-              });
-              cellIdx++;
+          let cellStartOffset = -1;
+          for (let scan = 10; scan <= 16 && scan + 1 < dataView.byteLength; scan++) {
+            const testCellVal = ((dataView.getUint8(scan) << 8) | dataView.getUint8(scan + 1)) / 1000;
+            if (testCellVal >= 2.0 && testCellVal <= 4.5) {
+              cellStartOffset = scan;
+              break;
             }
           }
-        }
-      }
-    }
 
-    // UNIVERSAL TLV SEARCH FALLBACK: If voltage is still 0, scan entire buffer for tags 0x83 (Voltage), 0x84 (Current), 0x85 (SOC)
-    if (parsedV === 0 && dataView.byteLength >= 6) {
-      for (let i = 0; i < dataView.byteLength - 2; i++) {
-        const tag = dataView.getUint8(i);
-        if (tag === 0x83 && i + 2 < dataView.byteLength) {
-          const testV = ((dataView.getUint8(i + 1) << 8) | dataView.getUint8(i + 2)) / 100;
-          if (testV >= 10 && testV <= 150) {
-            parsedV = testV;
-          }
-        } else if (tag === 0x85 && i + 1 < dataView.byteLength && parsedSoc === 0) {
-          const testSoc = dataView.getUint8(i + 1);
-          if (testSoc > 0 && testSoc <= 100) {
-            parsedSoc = testSoc;
-          }
-        } else if (tag === 0x84 && i + 2 < dataView.byteLength && parsedI === 0) {
-          const rawI = (dataView.getUint8(i + 1) << 8) | dataView.getUint8(i + 2);
-          if (rawI & 0x8000) {
-            parsedI = (rawI & 0x7FFF) / 100;
-          } else {
-            parsedI = -((rawI & 0x7FFF) / 100);
+          if (cellStartOffset >= 0) {
+            let cellIdx = 1;
+            for (let offset = cellStartOffset; offset + 1 < dataView.byteLength && cellIdx <= 32; offset += 2) {
+              const cellVal = ((dataView.getUint8(offset) << 8) | dataView.getUint8(offset + 1)) / 1000;
+              if (cellVal >= 2.0 && cellVal <= 4.5) {
+                parsedCells.push({
+                  id: cellIdx,
+                  voltage: Number(cellVal.toFixed(3)),
+                  isBalancing: false,
+                  healthStatus: cellVal < 2.8 || cellVal > 4.25 ? 'Warning' : 'Good'
+                });
+                cellIdx++;
+              }
+            }
           }
         }
       }
@@ -801,11 +844,16 @@ export function useBMS() {
       sumCellsV = Number(parsedCells.reduce((acc, c) => acc + c.voltage, 0).toFixed(2));
     }
 
-    if (sumCellsV > 0 && (parsedV === 0 || Math.abs(parsedV - sumCellsV) > 3.0)) {
+    if (sumCellsV > 0 && (parsedV === 0 || Math.abs(parsedV - sumCellsV) > 2.0)) {
       parsedV = sumCellsV;
     }
 
     setBmsData(prev => {
+      // If voltage jumped significantly (>5V difference), reset voltage smoother to prevent lag
+      if (parsedV > 0 && Math.abs(parsedV - prev.voltage) > 5.0) {
+        smootherRef.current.reset();
+      }
+
       const smoothedV = parsedV > 0 ? Number(smootherRef.current.getSmoothedVoltage(parsedV).toFixed(2)) : prev.voltage;
       
       // Fallback 2: Calculate SOC from voltage if raw SOC is missing/0 or out of bounds
@@ -1014,12 +1062,20 @@ export function useBMS() {
       if (earliest.type === 'JK_4E') {
         if (buffer.length >= 4) {
           const rawLen = (buffer[2] << 8) | buffer[3];
-          const expectedLen = (rawLen >= 10 && rawLen <= 400) ? (rawLen + 4) : 277;
-          if (buffer.length >= expectedLen) {
-            const frame = buffer.slice(0, expectedLen);
+          let expectedLen = (rawLen >= 10 && rawLen <= 400) ? (rawLen + 4) : 277;
+
+          // Boundary protection: If another BMS header starts later in buffer, respect boundary
+          const nextHeader = candidates.find(c => c.index > 0);
+          if (nextHeader && nextHeader.index >= 12 && nextHeader.index < expectedLen) {
+            expectedLen = nextHeader.index;
+          }
+
+          if (buffer.length >= expectedLen || (buffer.length >= 200 && !nextHeader)) {
+            const actualLen = Math.min(buffer.length, expectedLen);
+            const frame = buffer.slice(0, actualLen);
             const dataView = new DataView(new Uint8Array(frame).buffer);
             parseJkFrame(dataView);
-            buffer = buffer.slice(expectedLen);
+            buffer = buffer.slice(actualLen);
             rxBufferRef.current = buffer;
             continue;
           } else {
@@ -1029,8 +1085,9 @@ export function useBMS() {
           break;
         }
       } else if (earliest.type === 'JK_AA') {
+        const nextHeader = candidates.find(c => c.index > 0);
+        const frameLen = nextHeader && nextHeader.index >= 16 ? nextHeader.index : Math.min(buffer.length, 300);
         if (buffer.length >= 16) {
-          const frameLen = Math.min(buffer.length, 300);
           const frame = buffer.slice(0, frameLen);
           const dataView = new DataView(new Uint8Array(frame).buffer);
           parseJkFrame(dataView);
