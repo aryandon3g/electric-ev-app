@@ -393,23 +393,7 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Temperature Card */}
-              <div className="bg-white rounded-3xl p-6 shadow-[0_8px_30px_rgba(0,0,0,0.04)] flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${bmsData.temperature > 40 ? 'bg-red-50 text-red-500' : 'bg-blue-50 text-blue-500'}`}>
-                    <Thermometer size={24} />
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider">Battery Temperature</h3>
-                    <p className="text-2xl font-extrabold text-gray-900">
-                      {isConnected ? `${bmsData.temperature.toFixed(1)}°C` : '0.0°C'}
-                    </p>
-                  </div>
-                </div>
-                <div className={`px-3 py-1 rounded-full text-xs font-bold ${bmsData.thermalState === 'Normal' ? 'bg-green-50 text-green-600' : 'bg-orange-50 text-orange-600'}`}>
-                  {isConnected ? bmsData.thermalState : 'Disconnected'}
-                </div>
-              </div>
+
 
               {/* Charge Cycles Completed (BMS Telemetry Data) */}
               <div className="bg-white rounded-3xl p-6 shadow-[0_8px_30px_rgba(0,0,0,0.04)] flex items-center justify-between">
@@ -440,8 +424,7 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div className="col-span-2 bg-white rounded-3xl p-5 shadow-[0_8px_30px_rgba(0,0,0,0.04)] flex justify-between items-center">
+              <div className="w-full bg-white rounded-3xl p-5 shadow-[0_8px_30px_rgba(0,0,0,0.04)] flex justify-between items-center">
                    <div className="flex items-center gap-3">
                      <div className="w-10 h-10 rounded-2xl bg-indigo-50 text-indigo-500 flex items-center justify-center">
                        <Map size={20} />
@@ -459,27 +442,6 @@ export default function App() {
                          {bmsData.efficiencyWhPerKm} <span className="text-xs text-gray-400">Wh/km</span>
                        </div>
                    </div>
-                </div>
-
-                <div className="bg-white rounded-3xl p-5 shadow-[0_8px_30px_rgba(0,0,0,0.04)]">
-                   <div className="flex items-center gap-2 text-gray-400 mb-2">
-                     <Zap size={18} className="text-yellow-500" />
-                     <span className="text-[10px] font-bold uppercase tracking-wider">Voltage</span>
-                   </div>
-                   <div className="text-2xl font-extrabold text-gray-900">
-                     {bmsData.voltage.toFixed(2)}<span className="text-sm text-gray-400 ml-1">V</span>
-                   </div>
-                </div>
-                
-                <div className="bg-white rounded-3xl p-5 shadow-[0_8px_30px_rgba(0,0,0,0.04)]">
-                   <div className="flex items-center gap-2 text-gray-400 mb-2">
-                     <Activity size={18} className="text-blue-500" />
-                     <span className="text-[10px] font-bold uppercase tracking-wider">Current</span>
-                   </div>
-                   <div className="text-2xl font-extrabold text-gray-900">
-                     {Math.abs(bmsData.current).toFixed(1)}<span className="text-sm text-gray-400 ml-1">A</span>
-                   </div>
-                </div>
               </div>
 
               <div className="bg-white rounded-3xl p-6 shadow-[0_8px_30px_rgba(0,0,0,0.04)]">
