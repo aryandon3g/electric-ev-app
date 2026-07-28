@@ -1087,8 +1087,8 @@ export function useBMS() {
             expectedLen = nextHeader.index;
           }
 
-          if (buffer.length >= expectedLen || (buffer.length >= 200 && !nextHeader)) {
-            const actualLen = Math.min(buffer.length, expectedLen);
+          if (buffer.length >= expectedLen) {
+            const actualLen = expectedLen;
             const frame = buffer.slice(0, actualLen);
             const dataView = new DataView(new Uint8Array(frame).buffer);
             parseJkFrame(dataView);
@@ -1108,8 +1108,8 @@ export function useBMS() {
           expectedLen = nextHeader.index;
         }
 
-        if (buffer.length >= expectedLen || (buffer.length >= 200 && !nextHeader)) {
-          const actualLen = Math.min(buffer.length, expectedLen);
+        if (buffer.length >= expectedLen) {
+          const actualLen = expectedLen;
           const frame = buffer.slice(0, actualLen);
           const dataView = new DataView(new Uint8Array(frame).buffer);
           parseJkFrame(dataView);
