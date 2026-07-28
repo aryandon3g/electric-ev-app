@@ -142,13 +142,18 @@ export const BMS_PRESET_COMMANDS = {
   },
   JK02_READ_INFO: {
     name: 'JK02 / JK04 / jkbms.com Read Telemetry',
+    hex: 'AA 55 90 EB 96 00 00 00 00 00 00 00 00 00 00 00 00 00 00 10',
+    bytes: [0xAA, 0x55, 0x90, 0xEB, 0x96, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10]
+  },
+  JK02_DEVICE_INFO: {
+    name: 'JK02 / JK04 Read Device Info',
     hex: 'AA 55 90 EB 97 00 00 00 00 00 00 00 00 00 00 00 00 00 00 11',
     bytes: [0xAA, 0x55, 0x90, 0xEB, 0x97, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x11]
   },
   JK02_WAKE_INFO: {
     name: 'JK02 / JK04 Poll Request',
-    hex: '55 AA EB 90 02 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00',
-    bytes: [0x55, 0xAA, 0xEB, 0x90, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+    hex: '55 AA EB 90 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 7A',
+    bytes: [0x55, 0xAA, 0xEB, 0x90, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x7A]
   },
 
   // ANT BMS Command
@@ -777,60 +782,65 @@ export function useBMS() {
       }
     } else if ((h0 === 0xAA && h1 === 0x55) || (h0 === 0x55 && h1 === 0xAA)) {
       // JK02 / JK04 / Okinawa BMS frame parsing
-      if (dataView.byteLength >= 10) {
-        const rawVolts = ((dataView.getUint8(4) << 8) | dataView.getUint8(5)) / 100;
-        if (rawVolts >= 10 && rawVolts <= 150) {
-          parsedV = rawVolts;
-        }
-        if (dataView.byteLength >= 8) {
-          const rawI = (dataView.getUint8(6) << 8) | dataView.getUint8(7);
-          if (rawI & 0x8000) {
-            parsedI = (rawI & 0x7FFF) / 100;
-          } else {
-            parsedI = -((rawI & 0x7FFF) / 100);
-          }
-        }
-        if (dataView.byteLength >= 9) {
-          const socVal = dataView.getUint8(8);
-          if (socVal > 0 && socVal <= 100) {
-            parsedSoc = socVal;
-          }
-        }
-        if (dataView.byteLength >= 11) {
-          const rawT = (dataView.getUint8(9) << 8) | dataView.getUint8(10);
-          let tVal = rawT > 32767 ? rawT - 65536 : rawT;
-          if (tVal > 100) tVal = 100 - tVal;
-          if (tVal > -40 && tVal < 120) {
-            parsedTemp = tVal;
+      // Payload structure (Little Endian):
+      // 0-3: Header (55 AA EB 90)
+      // 4: Record type (0x02 for cell info / telemetry)
+      // 5: Frame counter
+      // 6+: Cell voltages (2 bytes each, mV, Little Endian)
+      const recordType = dataView.byteLength >= 5 ? dataView.getUint8(4) : 0;
+      
+      if (recordType === 0x02 && dataView.byteLength >= 150) {
+        // Read Cell Voltages (up to 32 cells)
+        let sumCellsV = 0;
+        let cellIdx = 1;
+        
+        // Scan cell voltages first to determine realistic pack voltage and validate offset
+        for (let i = 0; i < 32 && (6 + i * 2 + 1) < dataView.byteLength; i++) {
+          const cV = dataView.getUint16(6 + i * 2, true) / 1000;
+          if (cV >= 1.5 && cV <= 5.0) {
+            parsedCells.push({
+              id: cellIdx,
+              voltage: Number(cV.toFixed(3)),
+              isBalancing: false, // We check balancing later if needed
+              healthStatus: cV < 2.8 || cV > 4.25 ? 'Warning' : 'Good'
+            });
+            sumCellsV += cV;
+            cellIdx++;
           }
         }
 
-        // Auto-detect cell array start index in JK02 frame (scan offset 10..16)
-        if (dataView.byteLength >= 16) {
-          let cellStartOffset = -1;
-          for (let scan = 10; scan <= 16 && scan + 1 < dataView.byteLength; scan++) {
-            const testCellVal = ((dataView.getUint8(scan) << 8) | dataView.getUint8(scan + 1)) / 1000;
-            if (testCellVal >= 2.0 && testCellVal <= 4.5) {
-              cellStartOffset = scan;
-              break;
-            }
-          }
+        // JK02 variants use either offset 0 (24S) or offset 32 (32S) for telemetry data.
+        // We test both offsets against the sum of cell voltages to find the correct total voltage.
+        let vOff0 = dataView.byteLength >= 118 + 4 ? dataView.getUint32(118, true) / 1000 : 0;
+        let vOff32 = dataView.byteLength >= 150 + 4 ? dataView.getUint32(150, true) / 1000 : 0;
+        
+        let baseOffset = 0;
+        // If 32S offset matches the sum of cells much better than 24S offset, use 32S offset
+        if (Math.abs(vOff32 - sumCellsV) < Math.abs(vOff0 - sumCellsV) && vOff32 >= 10 && vOff32 <= 150) {
+          baseOffset = 32;
+        }
 
-          if (cellStartOffset >= 0) {
-            let cellIdx = 1;
-            for (let offset = cellStartOffset; offset + 1 < dataView.byteLength && cellIdx <= 32; offset += 2) {
-              const cellVal = ((dataView.getUint8(offset) << 8) | dataView.getUint8(offset + 1)) / 1000;
-              if (cellVal >= 2.0 && cellVal <= 4.5) {
-                parsedCells.push({
-                  id: cellIdx,
-                  voltage: Number(cellVal.toFixed(3)),
-                  isBalancing: false,
-                  healthStatus: cellVal < 2.8 || cellVal > 4.25 ? 'Warning' : 'Good'
-                });
-                cellIdx++;
-              }
-            }
-          }
+        const off = baseOffset;
+        
+        if (dataView.byteLength >= 118 + off + 4) {
+          parsedV = dataView.getUint32(118 + off, true) / 1000;
+        }
+        
+        if (dataView.byteLength >= 126 + off + 4) {
+          parsedI = dataView.getInt32(126 + off, true) / 1000; // int32
+        }
+        
+        if (dataView.byteLength >= 130 + off + 2) {
+          // Temperature Sensor 1
+          parsedTemp = dataView.getInt16(130 + off, true) / 10;
+        }
+        
+        if (dataView.byteLength >= 141 + off + 1) {
+          parsedSoc = dataView.getUint8(141 + off);
+        }
+        
+        if (dataView.byteLength >= 150 + off + 4) {
+          parsedCycles = dataView.getUint32(150 + off, true);
         }
       }
     }
@@ -1005,11 +1015,13 @@ export function useBMS() {
 
       // Find indices of all potential BMS frame headers
       const jk4EIdx = findSeq(buffer, [0x4E, 0x57]);
-      let jkAAIdx = findSeq(buffer, [0xAA, 0x55]);
-      if (jkAAIdx < 0) jkAAIdx = findSeq(buffer, [0x55, 0xAA]);
+      let jkAAIdx = findSeq(buffer, [0x55, 0xAA, 0xEB, 0x90]);
+      if (jkAAIdx < 0) jkAAIdx = findSeq(buffer, [0xAA, 0x55, 0x90, 0xEB]);
+      if (jkAAIdx < 0) jkAAIdx = findSeq(buffer, [0x55, 0xAA, 0x00, 0x00]); // Fallback for some variants
 
-      const dalyIdx = buffer.indexOf(0xA5);
-      const jbdIdx = buffer.indexOf(0xDD);
+      let dalyIdx = findSeq(buffer, [0xA5, 0x01]);
+      let jbdIdx = findSeq(buffer, [0xDD, 0x03]);
+      if (jbdIdx < 0) jbdIdx = findSeq(buffer, [0xDD, 0x04]);
 
       let antIdx = findSeq(buffer, [0xDB, 0xDB]);
       if (antIdx < 0) antIdx = findSeq(buffer, [0x7A, 0x7A]);
@@ -1056,6 +1068,11 @@ export function useBMS() {
       if (earliest.index > 0) {
         buffer = buffer.slice(earliest.index);
         rxBufferRef.current = buffer;
+        
+        // Update candidate indices to reflect the new buffer start
+        candidates.forEach(c => {
+          c.index -= earliest.index;
+        });
       }
 
       // Process according to the earliest header type
@@ -1086,16 +1103,21 @@ export function useBMS() {
         }
       } else if (earliest.type === 'JK_AA') {
         const nextHeader = candidates.find(c => c.index > 0);
-        const frameLen = nextHeader && nextHeader.index >= 16 ? nextHeader.index : Math.min(buffer.length, 300);
-        if (buffer.length >= 16) {
-          const frame = buffer.slice(0, frameLen);
+        let expectedLen = 300; // JK02 telemetry frames are 300 bytes
+        if (nextHeader && nextHeader.index >= 16) {
+          expectedLen = nextHeader.index;
+        }
+
+        if (buffer.length >= expectedLen || (buffer.length >= 200 && !nextHeader)) {
+          const actualLen = Math.min(buffer.length, expectedLen);
+          const frame = buffer.slice(0, actualLen);
           const dataView = new DataView(new Uint8Array(frame).buffer);
           parseJkFrame(dataView);
-          buffer = buffer.slice(frameLen);
+          buffer = buffer.slice(actualLen);
           rxBufferRef.current = buffer;
           continue;
         } else {
-          break;
+          break; // Wait for more chunks to assemble the full JK02 frame
         }
       } else if (earliest.type === 'DALY') {
         if (buffer.length >= 13) {
