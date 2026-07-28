@@ -73,15 +73,7 @@ const CellVoltageGraph = ({ cells, isConnected }: { cells: CellData[], isConnect
   const [selectedCell, setSelectedCell] = useState<CellData | null>(null);
 
   if (!isConnected) {
-    return (
-      <div className="bg-gray-50 rounded-2xl p-6 border border-gray-100 flex flex-col items-center justify-center text-center gap-2 text-gray-400 my-2">
-        <Activity size={24} className="text-gray-300" />
-        <span className="text-xs font-bold uppercase tracking-wider text-gray-600">No BMS Connected</span>
-        <p className="text-[11px] text-gray-400 max-w-xs">
-          Connect your battery over Bluetooth. Cell count and individual cell voltages will be automatically detected.
-        </p>
-      </div>
-    );
+    return null;
   }
 
   if (cells.length === 0) {
@@ -259,10 +251,6 @@ export default function App() {
   const [deepSleep, setDeepSleep] = useState(false);
   const [showTerminal, setShowTerminal] = useState(false);
 
-  const openStandaloneTab = () => {
-    window.open(window.location.href, '_blank');
-  };
-
   return (
     <div className="min-h-screen bg-[#F8F9FA] text-[#333333] font-sans selection:bg-blue-100 flex justify-center">
       {/* Mobile Constraint Container */}
@@ -271,26 +259,21 @@ export default function App() {
         {/* Header */}
         <header className="px-5 pt-5 pb-2 flex items-center justify-between z-10 bg-[#F8F9FA]/80 backdrop-blur-md sticky top-0 border-b border-gray-100">
           <div>
-            <h1 className="text-base font-black tracking-tight text-gray-900 flex items-center gap-1.5">
-              <span>E-Scooter BMS</span>
-              <span className="text-[10px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-bold">JK & Okinawa</span>
+            <h1 className="text-base font-black tracking-tight text-gray-900 leading-tight">
+              Chandramalti Automobiles
             </h1>
-            <p className="text-[11px] font-medium text-gray-400">
+            <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">
+              Akhari Bypass | Ph: 8840730180
+            </p>
+            <p className="text-[11px] font-medium text-gray-400 mt-1">
               {isConnected ? `Connected: ${deviceName || 'BMS Device'} (${bmsData.connectionType || 'BLE'})` : 'BLE / Serial Disconnected'}
             </p>
           </div>
           <div className="flex items-center gap-1.5">
             <button 
-              onClick={openStandaloneTab}
-              title="Open in New Tab for full Web Bluetooth modal permissions"
-              className="p-2 rounded-full bg-white text-gray-600 border border-gray-200 hover:bg-gray-50 shadow-xs text-xs font-bold"
-            >
-              <Zap size={14} className="text-amber-500" />
-            </button>
-            <button 
               onClick={isConnected ? disconnect : connectBluetooth}
               disabled={isConnecting}
-              className={`px-3 py-2 rounded-full flex items-center gap-1.5 shadow-sm text-xs font-bold transition-all ${
+              className={`p-2.5 rounded-full flex items-center justify-center shadow-sm transition-all ${
                 isConnected 
                   ? 'bg-blue-50 text-blue-600 border border-blue-100 hover:bg-blue-100' 
                   : isConnecting
@@ -299,20 +282,11 @@ export default function App() {
               }`}
             >
               {isConnecting ? (
-                <>
-                  <RefreshCw size={14} className="animate-spin text-white" />
-                  <span>Connecting...</span>
-                </>
+                <RefreshCw size={18} className="animate-spin text-white" />
               ) : isConnected ? (
-                <>
-                  <Bluetooth size={14} className="text-blue-500" />
-                  <span>Disconnect</span>
-                </>
+                <Bluetooth size={18} className="text-blue-500" />
               ) : (
-                <>
-                  <Bluetooth size={14} className="text-white" />
-                  <span>Connect BLE</span>
-                </>
+                <Bluetooth size={18} className="text-white" />
               )}
             </button>
           </div>
@@ -346,19 +320,7 @@ export default function App() {
               </div>
 
               {/* Status Banner when Disconnected or Connected */}
-              {!isConnected ? (
-                <div className="w-full bg-white rounded-3xl p-5 shadow-[0_8px_30px_rgba(0,0,0,0.04)] border border-gray-100 flex flex-col items-center text-center space-y-2">
-                  <div className="w-10 h-10 bg-blue-50 text-blue-500 rounded-2xl flex items-center justify-center">
-                    <Radio size={20} className="animate-pulse" />
-                  </div>
-                  <div>
-                    <h3 className="text-xs font-bold text-gray-800 uppercase tracking-wider">BLE Disconnected</h3>
-                    <p className="text-[11px] text-gray-400 mt-0.5">
-                      Tap the top-right <span className="font-bold text-blue-600">Connect BLE</span> button to pair with your BMS.
-                    </p>
-                  </div>
-                </div>
-              ) : (
+              {!isConnected ? null : (
                 <div className="w-full space-y-3">
                   {!bmsData.chargeDischargeActive && (
                     <div className="w-full bg-red-50 border-2 border-red-200 rounded-3xl p-4 flex items-center justify-between text-red-700 shadow-sm animate-pulse">
@@ -368,7 +330,7 @@ export default function App() {
                         </div>
                         <div>
                           <span className="text-xs font-black uppercase tracking-wider block">KILL SWITCH ACTIVATED</span>
-                          <span className="text-[11px] font-medium text-red-600">MOSFET Cutoff: Charge & Discharge are turned OFF (0.0A)</span>
+                          <span className="text-[11px] font-medium text-red-600">Scooty is turned OFF</span>
                         </div>
                       </div>
                     </div>
@@ -415,29 +377,8 @@ export default function App() {
 
               {/* Charge & Discharge Control (Linked to Swipe Lock) */}
               <div className="w-full mt-auto pt-2 space-y-2">
-                <div className="flex items-center justify-between px-2">
-                  <span className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">MOSFET State:</span>
-                  <span className={`text-xs font-bold px-2.5 py-0.5 rounded-full flex items-center gap-1 shadow-2xs border ${
-                    bmsData.chargeDischargeActive 
-                      ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
-                      : 'bg-red-50 text-red-700 border-red-200'
-                  }`}>
-                    {bmsData.chargeDischargeActive ? (
-                      <>
-                        <Zap size={12} className="text-emerald-600 fill-emerald-600" />
-                        <span>Charge & Discharge: ON</span>
-                      </>
-                    ) : (
-                      <>
-                        <Lock size={12} className="text-red-600" />
-                        <span>Charge & Discharge: OFF</span>
-                      </>
-                    )}
-                  </span>
-                </div>
-
                 <SwipeAction 
-                  label={bmsData.chargeDischargeActive ? "Swipe to turn Charge/Discharge OFF" : "Swipe to turn Charge/Discharge ON"}
+                  label={bmsData.chargeDischargeActive ? "Swipe to off the scooty" : "Swipe to on the scooty"}
                   icon={bmsData.chargeDischargeActive ? Lock : Unlock}
                   active={!bmsData.chargeDischargeActive}
                   onAction={toggleAntiTheft}
@@ -479,9 +420,6 @@ export default function App() {
                       <span className="text-2xl font-extrabold text-gray-900">{isConnected ? bmsData.cycleCount : 0}</span>
                       <span className="text-xs font-bold text-gray-500">Completed Cycles</span>
                     </div>
-                    <p className="text-[11px] text-gray-400 mt-0.5">
-                      Gaadi abhi tak kitni baar charge cycle complete ki (BMS Hardware Read)
-                    </p>
                   </div>
                 </div>
                 <div className="text-right">
@@ -586,8 +524,8 @@ export default function App() {
                           <h3 className="text-base font-bold text-gray-900">Battery Kill Switch</h3>
                           <p className="text-xs font-medium text-gray-500">
                             {bmsData.chargeDischargeActive 
-                              ? 'Charge & Discharge MOSFET Active' 
-                              : '⚠️ CUTOFF: Current & Power Stopped (0.0A)'}
+                              ? 'Scooty is ON' 
+                              : '⚠️ Scooty is OFF'}
                           </p>
                         </div>
                       </div>
@@ -600,13 +538,13 @@ export default function App() {
                             : 'bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white'
                         }`}
                       >
-                        {bmsData.chargeDischargeActive ? 'KILL SWITCH (OFF)' : 'RESTORE POWER (ON)'}
+                        {bmsData.chargeDischargeActive ? 'TURN OFF' : 'TURN ON'}
                       </button>
                     </div>
 
                     <div className="pt-2 border-t border-gray-100">
                       <SwipeAction 
-                        label={bmsData.chargeDischargeActive ? "Swipe to Cutoff Battery Power" : "Swipe to Enable Charge & Discharge"}
+                        label={bmsData.chargeDischargeActive ? "Swipe to off the scooty" : "Swipe to on the scooty"}
                         icon={bmsData.chargeDischargeActive ? Lock : Unlock}
                         active={!bmsData.chargeDischargeActive}
                         onAction={toggleAntiTheft}
