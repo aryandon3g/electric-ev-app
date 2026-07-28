@@ -70,15 +70,6 @@ export function LiveProgressBar({ percentage, isCharging, voltage, estimatedRang
           </div>
         </div>
       </div>
-      
-      <div className="mt-8 flex flex-col items-center justify-center text-center bg-gray-50/80 px-8 py-4 rounded-3xl border border-gray-100 w-full">
-        <span className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-1.5 flex items-center gap-1.5">
-          Estimated Range
-        </span>
-        <div className={`text-4xl sm:text-5xl font-black tracking-tight ${!isConnected ? 'text-gray-400' : 'text-gray-900'}`}>
-          {estimatedRangeKM.toFixed(0)} <span className={`text-xl sm:text-2xl font-bold ml-1 ${!isConnected ? 'text-gray-300' : 'text-gray-400'}`}>km</span>
-        </div>
-      </div>
     </div>
   );
 }

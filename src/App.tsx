@@ -336,24 +336,7 @@ export default function App() {
                     </div>
                   )}
 
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
-                      <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Pack Voltage</span>
-                      <span className="text-xl font-mono font-black text-gray-900">{bmsData.voltage.toFixed(2)}<span className="text-xs font-normal text-gray-400 ml-0.5">V</span></span>
-                    </div>
-                    <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
-                      <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Live Current</span>
-                      <span className="text-xl font-mono font-black text-gray-900">{bmsData.current.toFixed(1)}<span className="text-xs font-normal text-gray-400 ml-0.5">A</span></span>
-                    </div>
-                    <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
-                      <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Protocol</span>
-                      <span className="text-xs font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-md inline-block">{bmsData.detectedProtocol || 'Listening...'}</span>
-                    </div>
-                    <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
-                      <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Temperature</span>
-                      <span className="text-xl font-mono font-black text-gray-900">{bmsData.temperature.toFixed(1)}<span className="text-xs font-normal text-gray-400 ml-0.5">°C</span></span>
-                    </div>
-                  </div>
+
                 </div>
               )}
 
@@ -390,6 +373,26 @@ export default function App() {
           {activeTab === 'diagnostics' && (
             <motion.div initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} className="space-y-4">
               
+              {/* Pack Voltage, Live Current, Protocol, Temperature Grid */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+                  <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Pack Voltage</span>
+                  <span className="text-xl font-mono font-black text-gray-900">{bmsData.voltage.toFixed(2)}<span className="text-xs font-normal text-gray-400 ml-0.5">V</span></span>
+                </div>
+                <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+                  <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Live Current</span>
+                  <span className="text-xl font-mono font-black text-gray-900">{bmsData.current.toFixed(1)}<span className="text-xs font-normal text-gray-400 ml-0.5">A</span></span>
+                </div>
+                <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+                  <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Protocol</span>
+                  <span className="text-xs font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-md inline-block">{bmsData.detectedProtocol || 'Listening...'}</span>
+                </div>
+                <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+                  <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Temperature</span>
+                  <span className="text-xl font-mono font-black text-gray-900">{bmsData.temperature.toFixed(1)}<span className="text-xs font-normal text-gray-400 ml-0.5">°C</span></span>
+                </div>
+              </div>
+
               {/* Temperature Card */}
               <div className="bg-white rounded-3xl p-6 shadow-[0_8px_30px_rgba(0,0,0,0.04)] flex items-center justify-between">
                 <div className="flex items-center gap-4">
